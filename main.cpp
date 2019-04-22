@@ -26,8 +26,26 @@ float theta1 = 45*CV_PI/180, theta2 = -45*CV_PI/180;
 cv::Matx33d R1, R2, R, R_l, R_r;
 cv::Vec3d t1, t2, t;
 cv::Vec3f euler1, euler2;
-cv::Mat Rleft, Rright, Rfront, Rback;
+cv::Matx33d Rleft, Rright, Rfront, Rback;
 cv::Mat result1, result2;
+
+cv::Matx33d Rotation_x(float angle)
+{
+  //angle = angle * CV_PI / 180;
+  return cv::Matx33d(1, 0, 0, 0, cos(angle), sin(angle), 0, -sin(angle), cos(angle));
+}
+
+cv::Matx33d Rotation_y(float angle)
+{
+  //angle = angle * CV_PI / 180;
+  return cv::Matx33d(cos(angle), 0, -sin(angle), 0, 1, 0, sin(angle), 0, cos(angle));
+}
+
+cv::Matx33d Rotation_z(float angle)
+{
+  //angle = angle * CV_PI / 180;
+  return cv::Matx33d(cos(angle), sin(angle), 0, -sin(angle), cos(angle), 0, 0, 0, 1);
+}
 
 void readTransformation(std::string filename, cv::Matx33d& R, cv::Vec3d& t)
 {
@@ -97,7 +115,7 @@ void calculateTwoRotation(cv::Matx33d R, cv::Vec3d tvec, cv::Matx33d& R1, cv::Ma
 void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
 {
   cv::Size image_size = src.size();
-  float theta1 = -30*CV_PI/180.0, theta2 = 45*CV_PI/180.0;
+  float theta1 = -45*CV_PI/180.0, theta2 = 45*CV_PI/180.0;
 
   if(src.empty() || dst.empty())
   {
@@ -105,42 +123,81 @@ void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float 
     return;
   }
 
-  float xc1 = xc + fx * tan((theta2-theta1)/2), yc1 = yc;
-  float xc2 = xc + fx * tan(-(theta2-theta1)/2), yc2 = yc;
-  //float xc1 = xc + fx * tan(theta1), yc1 = yc; //theta1 < 0  //找到左右针孔的主点
-  //float xc2 = xc + fx * tan(theta2), yc2 = yc; //theta2 > 0
+  cv::Vec3f center(0, 0, 1);
+  cv::Vec3f center1 = Rotation_y(-(theta2-theta1)/2).t() * center;
+  cv::Vec3f center2 = Rotation_y((theta2-theta1)/2).t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2); //theta1 < 0 theta2 > 0 找到左右针孔的主点
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
   
   for(int i = 0; i < image_size.height; i++)
     for(int j = 0; j < image_size.width; j++)
     {
-      cv::Point3f point3d;
-      float x, y, z;
-      if(j <= xc )
+      cv::Vec3f world_point;
+      if(j <= xc)
       {
-        x = (j-xc1) / fx;
-        y = (i-yc1) / fy;
-        z = 1;
-        float theta = theta1;
-        point3d.x = z*sin(theta) + x*cos(theta);  //转回原相机坐标系
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
+        world_point(0) = (j-xc1) / fx;
+        world_point(1) = (i-yc1) / fy;
+        world_point(2) = 1;
+        float theta = -(theta2-theta1)/2;
+        world_point = Rotation_y(theta).t() * world_point;  //转回原相机坐标系
       }
       else
       {
-        x = (j-xc2) / fx;
-        y = (i-yc2) / fy;
-        z = 1;
-        float theta = theta2;
-        point3d.x = z*sin(theta) + x*cos(theta);
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
+        world_point(0) = (j-xc2) / fx;
+        world_point(1) = (i-yc2) / fy;
+        world_point(2) = 1;
+        float theta = (theta2-theta1)/2;
+        world_point = Rotation_y(theta).t() * world_point;  //转回原相机坐标系
       }
-      cv::Point2f point2d = ocam_model.World2Camera(point3d);
+      cv::Point2f point2d = ocam_model.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
       int u = point2d.x, v = point2d.y;
       if(u >= 0 && u < src.cols && v >= 0 && v < src.rows)
         dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
     }
 }
+
+/*
+void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
+{
+  cv::Size image_size = src.size();
+  float theta1 = -45*CV_PI/180.0, theta2 = 10*CV_PI/180.0;
+  for(int i = 0; i < image_size.height; i++)
+    for(int j = 0; j < image_size.width; j++)
+    {
+      cv::Point2f point2d;
+      point2d.x = j;
+      point2d.y = i;
+      cv::Point3f point3d = ocam_model.Camera2World(point2d);
+      float x = point3d.x;
+      float y = point3d.y;
+      float z = point3d.z;
+      int u, v;
+      if(x <= tan((theta1+theta2)/2)*point3d.z)
+      {
+        float alpha = -(theta2-theta1)/2;
+        point3d.x = -z*sin(theta1) + x*cos(theta1);
+        point3d.y = y; 
+        point3d.z = z*cos(theta1) + x*sin(theta1);
+        //u = point3d.x/point3d.z*fx + xc - fx*tan(theta1);
+        u = point3d.x/point3d.z*fx + xc + fx*tan(alpha);
+        v = point3d.y/point3d.z*fy + yc;
+      }
+      else
+      {
+        float alpha = (theta2-theta1)/2;
+        point3d.x = -z*sin(theta2) + x*cos(theta2);
+        point3d.y = y;
+        point3d.z = z*cos(theta2) + x*sin(theta2);
+        //u = point3d.x/point3d.z*fx + xc - fx*tan(theta2);
+        u = point3d.x/point3d.z*fx + xc + fx*tan(alpha);
+        v = point3d.y/point3d.z*fy + yc;
+      }
+      
+      if(u >= 0 && u < dst.cols && v >= 0 && v < dst.rows)
+        dst.at<cv::Vec3b>(v, u) = src.at<cv::Vec3b>(i,j);
+    }
+}
+*/
 
 void Fisheye2twoPerspective2(cv::Mat src, cv::Mat dst, float fx1, float fy1, float fx2, float fy2, float theta1, float theta2, FisheyeParam& ocam_model)
 {
@@ -199,11 +256,6 @@ void Fisheye2Perspective(cv::Mat src, cv::Mat dst, float fx, float fy, cv::Matx3
   }
 
   cv::Size image_size = dst.size();
-  
-  float theta1 = 45*CV_PI/180, theta2 = -45*CV_PI/180;
-  float xc1 = xc - fx * tan(45*CV_PI/180), yc1 = yc;
-  float xc2 = xc - fx * tan(-45*CV_PI/180), yc2 = yc;
-  
   for(int i = 0; i < image_size.height; i++)
     for(int j = 0; j < image_size.width; j++)
     {
@@ -215,35 +267,10 @@ void Fisheye2Perspective(cv::Mat src, cv::Mat dst, float fx, float fy, cv::Matx3
       y = (i - yc) / fy;
       z = 1;
       cv::Vec3d p(x,y,z);
-
-      /*
-      if(j <= xc)
-      {
-        x = (j-xc1) / fx;
-        y = (i-yc1) / fy;
-        z = 1;
-        float theta = -theta1;
-        point3d.x = z*sin(theta) + x*cos(theta);
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
-      }
-      else
-      {
-        x = (j-xc2) / fx;
-        y = (i-yc2) / fy;
-        z = 1;
-        float theta = -theta2;
-        point3d.x = z*sin(theta) + x*cos(theta);
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
-      }
-      cv::Vec3d p(point3d.x,point3d.y,point3d.z);
-      */
-      p = Rrect.inv() * p;
+      p = Rrect.t() * p;
       point3d.x = p[0];
       point3d.y = p[1];
       point3d.z = p[2];
-      
       
       cv::Point2f point2d = ocam_model.World2Camera(point3d);
 
@@ -315,10 +342,7 @@ void twoFisheye2twoPerspective(cv::Mat src1, cv::Mat src2, cv::Mat dst1, cv::Mat
         point3d2.y = point3d.y;
         point3d2.z = point3d.z;
         //point3d2.x = x;
-        //point3d2.y = y;
-        //point3d2.z = z;
       }
-      
       cv::Point2f point2d1 = ocam_model1.World2Camera(point3d1);
       cv::Point2f point2d2 = ocam_model2.World2Camera(point3d2);
 
@@ -379,39 +403,52 @@ cv::Vec3f rotationMatrixToEulerAngles(cv::Mat &R)
 
     //float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(1,0) * R.at<double>(1,0));
     float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(0,1) * R.at<double>(0,1));
+    //float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(0,2) * R.at<double>(0,2));
     bool singular = sy < 1e-5; // If
  
     float x, y, z;
     if (!singular)
     {
-        //先绕x再绕y最后绕z旋转
+        //先绕x再绕y最后绕z旋转, don't work
         /*
         x = atan2(R.at<double>(2,1) , R.at<double>(2,2));
         y = atan2(-R.at<double>(2,0), sy);
         z = atan2(R.at<double>(1,0), R.at<double>(0,0));
         */
-        //先绕z再绕y最后绕x旋转
+        //先绕z再绕y最后绕x旋转, work
         
         x = atan2(R.at<double>(1,2) , R.at<double>(2,2));
         y = atan2(-R.at<double>(0,2), sy);
         z = atan2(R.at<double>(0,1), R.at<double>(0,0));
         
+        //先绕y再绕z最后绕x旋转, don't work
+        /*
+        x = atan2(-R.at<double>(2,1) , R.at<double>(1,1));
+        y = atan2(-R.at<double>(0,2), R.at<double>(0,0));
+        z = atan2(R.at<double>(0,1), sy);
+        */
         
     }
     else
     {
-        //先绕x再绕y最后绕z旋转
+        //先绕x再绕y最后绕z旋转, don't work
         /*
         x = atan2(-R.at<double>(1,2), R.at<double>(1,1));
         y = atan2(-R.at<double>(2,0), sy);
         z = 0;
         */
-        //先绕z再绕y最后绕x旋转
+        //先绕z再绕y最后绕x旋转, work
         
         x = atan2(R.at<double>(1,0), R.at<double>(2,0));
         y = atan2(-R.at<double>(0,2), sy);
         z = 0;
         
+        //先绕y再绕z最后绕x旋转, don't work
+        /*
+        x = atan2(R.at<double>(1,2), R.at<double>(2,2));
+        y = 0;
+        z = atan2(R.at<double>(0,1), sy);
+        */
     }
 
     return cv::Vec3f(x, y, z);
@@ -422,42 +459,47 @@ void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy
   int width = src.cols, height = src.rows;
   //std::cout << euler << std::endl;
 
-  cv::Matx33d Rz(cos(euler(2)), sin(euler(2)), 0, -sin(euler(2)), cos(euler(2)), 0, 0, 0, 1);
-  cv::Matx33d Ry(cos(euler(1)), 0, -sin(euler(1)), 0, 1, 0, sin(euler(1)), 0, cos(euler(1))); //= (cv::Mat_<double>(3,3) << cos(euler(2)), 0, sin(euler(2)), 0, 1, 0, -sin(euler(2)), 0, cos(euler(2)));
-  cv::Matx33d Rx(1, 0, 0, 0, cos(euler(0)), sin(euler(0)), 0, -sin(euler(0)), cos(euler(0)));
+  float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
+
+  cv::Matx33d Rz = Rotation_z(euler(2));
+  cv::Matx33d Ry = Rotation_y(euler(1));
+  cv::Matx33d Rx = Rotation_x(euler(0));
 
   float theta = CV_PI/2;
-  cv::Matx33d Rrectx(1, 0, 0, 0, cos(theta), sin(theta), 0, -sin(theta), cos(theta));
-  cv::Matx33d Rrecty(cos(theta), 0, -sin(theta), 0, 1, 0, sin(theta), 0, cos(theta));
-  cv::Matx33d Rrectz(cos(theta), sin(theta), 0, -sin(theta), cos(theta), 0, 0, 0, 1);
+  cv::Matx33d Rrectx = Rotation_x(theta);
+  cv::Matx33d Rrecty = Rotation_y(theta);
+  cv::Matx33d Rrectz = Rotation_z(theta);
 
-  cv::Matx33d Ryleft(cos(theta1), 0, sin(theta1), 0, 1, 0, -sin(theta1), 0, cos(theta1));
-  cv::Matx33d Ryright(cos(theta2), 0, sin(theta2), 0, 1, 0, -sin(theta2), 0, cos(theta2));
+  cv::Matx33d Ryleft = Rotation_y(theta1);
+  cv::Matx33d Ryright = Rotation_y(theta2);
 
   float fx1 = fx, fx2 = fx, fy1 = fy, fy2 = fy;
   cv::Vec3f center(0, 0, 1);
-  cv::Matx33d Rymean = Ryleft * Ryright.t();
+
+  /*
+  cv::Matx33d Rymean = Ryright * Ryback.t();
   cv::Vec3d rvec = cv::Affine3d(Rymean).rvec() * 0.5;
   cv::Rodrigues(rvec, Rymean);
   cv::Vec3f new_center1 = Rymean.t() * Rrectx * Rx.t() * Ry.t() * center;
   cv::Vec3f new_center2 = Rymean * Rrectx * Rx.t() * Ry.t() * center;
   float xc1 = xc + fx1 * new_center1(0)/new_center1(2), yc1 = yc + fy1 * new_center1(1)/new_center1(2);
   float xc2 = xc + fx2 * new_center2(0)/new_center2(2), yc2 = yc + fy2 * new_center2(1)/new_center2(2);
+  */
+
+  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
+  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
 
   for(int i = 0; i < height; i++)
     for(int j =0; j < width; j++)
     {
-      float x, y, z;
-      /*
-      cv::Vec3f world_point;//(x,y,z);
-      if(j <= xc)
+      cv::Vec3f world_point;
+      if(j < xc)
       {
         world_point(0) = (j-xc1)/fx1;
         world_point(1) = (i-yc1)/fy1;
         world_point(2) = 1;
-        world_point = Ry.t() * world_point;
-        world_point = Rx.t() * world_point;
-        world_point = Rrect * world_point;
         world_point = Ryleft.t() * world_point;
       }
       else
@@ -465,29 +507,16 @@ void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy
         world_point(0) = (j-xc2)/fx2;
         world_point(1) = (i-yc2)/fy2;
         world_point(2) = 1;
-        world_point = Ry.t() * world_point;
-        world_point = Rx.t() * world_point;
-        world_point = Rrect * world_point;
         world_point = Ryright.t() * world_point;
       }
-      */
-      x = (j-xc)/fx;
-      y = (i-yc)/fy;
-      z = 1;
-      cv::Vec3f world_point(x,y,z);
+
       //world_point = (Rx * Ry * Rz) * world_point;
-      //world_point = Rz.t() * world_point;
-      //world_point = Ry.t() * world_point;
-      //world_point = Rx.t() * world_point;
-      //world_point = Ry.t() * world_point;
-      //world_point = Rz.t() * world_point;
       world_point = Rrectx.t() * world_point;
-      world_point = Rx * world_point;
+      //world_point = Rx * world_point;
       //world_point = Ry * world_point;
       //world_point = Rz * world_point;
       //world_point = Ry * world_point;
-      //world_point = Rx * world_point;
-      //world_point = Ry * world_point;
+      world_point = Rx * world_point;
 
       cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
       int u = pix.x, v = pix.y;
@@ -496,55 +525,63 @@ void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy
     }
 }
 
+
 void upraiseCamera2(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
 {
   int width = src.cols, height = src.rows;
+  float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
 
-  cv::Matx33d Rz(cos(euler(2)), sin(euler(2)), 0, -sin(euler(2)), cos(euler(2)), 0, 0, 0, 1);
-  cv::Matx33d Ry(cos(euler(1)), 0, -sin(euler(1)), 0, 1, 0, sin(euler(1)), 0, cos(euler(1))); //= (cv::Mat_<double>(3,3) << cos(euler(2)), 0, sin(euler(2)), 0, 1, 0, -sin(euler(2)), 0, cos(euler(2)));
-  cv::Matx33d Rx(1, 0, 0, 0, cos(euler(0)), sin(euler(0)), 0, -sin(euler(0)), cos(euler(0)));
+  cv::Matx33d Rz = Rotation_z(euler(2));
+  cv::Matx33d Ry = Rotation_y(euler(1));
+  cv::Matx33d Rx = Rotation_x(euler(0));
 
   float theta = CV_PI/2;
-  cv::Matx33d Rrectx(1, 0, 0, 0, cos(theta), sin(theta), 0, -sin(theta), cos(theta));
+  cv::Matx33d Rrectx = Rotation_x(theta);
+
+  cv::Vec3f center(0, 0, 1);
+  cv::Vec3f center1 = Rotation_y(theta1).t() /* Rx * Rrectx.t()*/ * center;
+  cv::Vec3f center2 = Rotation_y(theta2).t() /* Rx * Rrectx.t()*/ * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
 
   for(int i = 0; i < height; i++)
     for(int j =0; j < width; j++)
     {
       cv::Point3f point3d = ocam.Camera2World(cv::Point2f(j,i));
-      float x, y, z;
-      x = point3d.x;
-      y = point3d.y;
-      z = point3d.z;
-      cv::Vec3f world_point(x,y,z);
+      cv::Vec3f world_point(point3d.x, point3d.y, point3d.z);
       world_point = Rx.t() * world_point;
       world_point = Rrectx * world_point;
- 
-      int u = world_point(0)/world_point(2)*fx + xc;
-      int v = world_point(1)/world_point(2)*fy + yc;
+      int u, v;
+      if(j < xc)
+      {
+        world_point = Rotation_y(theta1) * world_point;
+        u = world_point(0)/world_point(2)*fx + xc1;
+        v = world_point(1)/world_point(2)*fy + yc1;
+      }
+      else
+      {
+        world_point = Rotation_y(theta2) * world_point;
+        u = world_point(0)/world_point(2)*fx + xc2;
+        v = world_point(1)/world_point(2)*fy + yc2;
+      }
+      
       if(u >=0 && u < width && v >= 0 && v < height)
         dst.at<cv::Vec3b>(v,u) = src.at<cv::Vec3b>(i,j);
     }
 }
 
-void correctCameraWithRotation(cv::Mat src, cv::Mat dst, cv::Mat R, float fx, float fy, float xc, float yc, FisheyeParam ocam)
+void correctCameraWithRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R, float fx, float fy, float xc, float yc, FisheyeParam ocam)
 {
   int width = src.cols, height = src.rows;
-  // cv::Vec3f p(xc, yc, 1);
-  // cv::Matx33d R_;
-  // R.convertTo(R_, CV_64F);
-  // p = R_ * p;
-  // xc = p(0);
-  // yc = p(1);
   for(int i = 0; i < height; i++)
     for(int j =0; j < width; j++)
     {
-      float x, y, z;
-      x = (j-xc)/fx;
-      y = (i-yc)/fy;
-      z = 1;
-      cv::Mat world_point = (cv::Mat_<double>(3,1) << x,y,z);
-      world_point = R * world_point;
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point));
+      cv::Vec3f world_point;
+      world_point(0) = (j-xc)/fx;
+      world_point(1) = (i-yc)/fy;
+      world_point(2) = 1;
+      world_point = R.t() * world_point;
+      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
       int u = pix.x, v = pix.y;
       if(u >=0 && u < width && v >= 0 && v < height)
         dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
@@ -558,16 +595,23 @@ void Onchange(int, void*)
                                  0,  0, 1);
   dst1 = cv::Mat(src1.rows, src1.cols, src1.type(), cv::Scalar::all(0));
   dst2 = cv::Mat(src2.rows, src2.cols, src2.type(), cv::Scalar::all(0));
-  //Fisheye2Perspective(src1, dst1, fx, fy, R_r, ocam_model1);
-  //Fisheye2Perspective(src2, dst2, fx, fy, R_l, ocam_model2);
+  result1 = cv::Mat(src1.rows, src1.cols, src1.type(), cv::Scalar::all(0));
+  result2 = cv::Mat(src2.rows, src2.cols, src2.type(), cv::Scalar::all(0));
   //twoFisheye2twoPerspective(src1, src2, dst1, dst2, fx, fy, R_r, R_l, ocam_model1, ocam_model2);
+  //Fisheye2Perspective(src1, result1, fx, fy, R_l, ocam_model1);
+  //Fisheye2Perspective(src2, result2, fx, fy, R_r, ocam_model2);
   upraiseCamera(src1, dst1, euler1, fx, fy, xc, yc, ocam_model1);
   upraiseCamera(src2, dst2, euler2, fx, fy, xc, yc, ocam_model2);
-  //correctCameraWithRotation(src1, dst1, Rleft, fx, fy, xc, yc, ocam_model1);
-  //correctCameraWithRotation(src2, dst2, Rfront, fx, fy, xc, yc, ocam_model2);
+  Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc,ocam_model1);
+  Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc,ocam_model2);
+  //correctCameraWithRotation(src1, result1, Rright, fx, fy, xc, yc, ocam_model1);
+  //correctCameraWithRotation(src2, result2, Rback, fx, fy, xc, yc, ocam_model2);
 
   cv::imshow( "Undistorted Perspective Image1", dst1 );
   cv::imshow( "Undistorted Perspective Image2", dst2 );
+  cv::imshow( "two perspective result1", result1 );
+  cv::imshow( "two perspective result2", result2 );
+
 }
 
 int main(int argc, char *argv[])
@@ -591,6 +635,10 @@ int main(int argc, char *argv[])
   readTransformation("../result/back.txt", R2, t2);
   //mapx1 = cv::Mat(src1.rows, src1.cols, CV_32FC1);
   //mapy1 = cv::Mat(src1.rows, src1.cols, CV_32FC1);
+  R1 = R1.t();  //由Twc转化为Tcw
+  t1 = -R1 * t1;
+  R2 = R2.t();
+  t2 = -R2 * t2;
 
   dst1 = cv::Mat(src1.rows, src1.cols, src1.type(), cv::Scalar::all(0));
   dst2 = cv::Mat(src2.rows, src2.cols, src2.type(), cv::Scalar::all(0));
@@ -609,34 +657,44 @@ int main(int argc, char *argv[])
   //                               0, fy, yc,
   //                               0,  0, 1);
 
-  R = R2 * R1.t();
-  t = t2 - R * t1;
-  calculateTwoRotation(R, t, R_l, R_r);
-  //Fisheye2Perspective(src1, dst1, fx, fy, R_r, ocam_model1);
-  //Fisheye2Perspective(src2, dst2, fx, fy, R_l, ocam_model2);
+  //R = R2 * R1.t(); //R1,R2,t1,t2为Tcw
+  //t = t2 - R * t1;
+
   //twoFisheye2twoPerspective(src1, src2, dst1, dst2, fx, fy, R_r, R_l, ocam_model1, ocam_model2);
-  cv::Mat R1_mat, R2_mat;
-  cv::Mat(R1.t(), false).convertTo(R1_mat, CV_64F);
-  cv::Mat(R2.t(), false).convertTo(R2_mat, CV_64F);
   //Rleft = eulerAnglesToRotationMatrix(cv::Vec3f(CV_PI/4, 0, 0));// * R1_mat.t();
   //Rfront = eulerAnglesToRotationMatrix(cv::Vec3f(CV_PI/4, 0, 0));// * R2_mat.t();
   //correctCameraWithRotation(src1, dst1, Rleft, fx, fy, xc, yc, ocam_model1);
   //correctCameraWithRotation(src2, dst2, Rfront, fx, fy, xc, yc, ocam_model2);
+
+  cv::Mat R1_mat, R2_mat;
+  //cv::Mat(R1.t(), false).convertTo(R1_mat, CV_64F);  //R1, R2为Rwc
+  //cv::Mat(R2.t(), false).convertTo(R2_mat, CV_64F);
+  cv::Mat(R1, false).convertTo(R1_mat, CV_64F);  //R1, R2为Rcw
+  cv::Mat(R2, false).convertTo(R2_mat, CV_64F);
   euler1 = rotationMatrixToEulerAngles(R1_mat);
   euler2 = rotationMatrixToEulerAngles(R2_mat);
-
-  //cv::Matx33d Rz(cos(euler1(2)), -sin(euler1(2)), 0, sin(euler1(2)), cos(euler1(2)), 0, 0, 0, 1);
-  //cv::Matx33d Ry(cos(euler1(1)), 0, sin(euler1(1)), 0, 1, 0, -sin(euler1(1)), 0, cos(euler1(1)));
-  //cv::Matx33d Rx(1, 0, 0, 0, cos(euler1(0)), -sin(euler1(0)), 0, sin(euler1(0)), cos(euler1(0)));
-  //std::cout << "Rz * Ry * Rx: " << std::endl << Rz * Ry * Rx << std::endl;
-  //std::cout << "Rx * Ry * Rz: " << std::endl << Rx * Ry * Rz << std::endl;
-  //std::cout << "R1: " << std::endl << R1 << std::endl;
-
   upraiseCamera(src1, dst1, euler1, fx, fy, xc, yc, ocam_model1);
   upraiseCamera(src2, dst2, euler2, fx, fy, xc, yc, ocam_model2);
-  Fisheye2twoPerspective(dst1, result1, fx, fy, xc, yc, ocam_model1);
-  Fisheye2twoPerspective(dst2, result2, fx, fy, xc, yc, ocam_model2);
-  
+  cv::Matx33d Rx1 = Rotation_x(euler1(0));
+  cv::Matx33d Rx2 = Rotation_x(euler2(0));
+  cv::Matx33d Rrect = Rotation_x(CV_PI/2);
+  R1 = Rrect * Rx1.t() * R1;
+  t1 = Rrect * Rx1.t() * t1;
+  R2 = Rrect * Rx2.t() * R2;
+  t2 = Rrect * Rx2.t() * t2;
+  R = R2 * R1.t();
+  t = t2 - R * t1;
+  //calculateTwoRotation(R, t, R_l, R_r);
+  //Fisheye2Perspective(dst1, result1, fx, fy, R_l, ocam_model1);
+  //Fisheye2Perspective(dst2, result2, fx, fy, R_r, ocam_model2);
+  Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc, ocam_model1);
+  Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc, ocam_model2);
+  calculateTwoRotation(R, t, R_l, R_r);
+  Rright = R_l * Rrect * Rx1.t();
+  Rback = R_r * Rrect * Rx2.t();
+  //correctCameraWithRotation(src1, result1, Rright, fx, fy, xc, yc, ocam_model1);
+  //correctCameraWithRotation(src2, result2, Rback, fx, fy, xc, yc, ocam_model2);
+
   cv::namedWindow( "Original fisheye camera image1", 0 );
   cv::namedWindow( "Original fisheye camera image2", 0 );
   cv::namedWindow( "Undistorted Perspective Image1", 0 );
