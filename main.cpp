@@ -25,13 +25,13 @@ FisheyeParam ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_bac
 cv::Matx33d Rotation_left, Rotation_front, Rotation_right, Rotation_back;
 cv::Vec3d Translation_left, Translation_front, Translation_right, Translation_back;
 
-cv::Matx33d Rotation_left2front, Rotation_front2right, Rotation_right2back, Rotation_back2front;
-cv::Vec3d Translation_left2front, Translation_front2right, Translation_right2back, Translation_back2front;
+// cv::Matx33d Rotation_left2front, Rotation_front2right, Rotation_right2back, Rotation_back2front;
+// cv::Vec3d Translation_left2front, Translation_front2right, Translation_right2back, Translation_back2front;
 
 cv::Matx33d Rotation_left_l, Rotation_left_r, Rotation_front_l, Rotation_front_r;
 cv::Matx33d Rotation_right_l, Rotation_right_r, Rotation_back_l, Rotation_back_r;
-
-cv::Vec3f euler1, euler2;
+cv::Vec3d euler_left, euler_front, euler_right, euler_back;
+cv::Matx33d Rrect;
 
 cv::Matx33d Rotation_x(float angle)
 {
@@ -108,7 +108,7 @@ void Load()
 
 void initImages()
 {
-  large = cv::Mat (src_left.rows, src_left.cols*2, src_left.type(), cv::Scalar::all(0));
+  large = cv::Mat (src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
 
   dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
   dst_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
@@ -132,7 +132,7 @@ bool isRotationMatrix(const cv::Matx33d &R)
 }
 
 // Calculates rotation matrix to euler angles(the order is z first, then x, y last).
-cv::Vec3f rotationMatrixToEulerAngles(const cv::Matx33d &R)
+cv::Vec3d rotationMatrixToEulerAngles(const cv::Matx33d &R)
 {
     assert(isRotationMatrix(R));
 
@@ -141,7 +141,7 @@ cv::Vec3f rotationMatrixToEulerAngles(const cv::Matx33d &R)
     //float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(0,2) * R.at<double>(0,2));
     bool singular = sy < 1e-5; // If
  
-    cv::Vec3f result;
+    cv::Vec3d result;
     if (!singular)
     {
         //先绕x再绕y最后绕z旋转, don't work
@@ -234,12 +234,11 @@ void calculateTwoRotation(cv::Matx33d R, cv::Vec3d tvec, cv::Matx33d& R1, cv::Ma
 
 void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_old, const cv::Matx33d& R2_old, const cv::Vec3d& t2_old, cv::Matx33d& R_l, cv::Matx33d& R_r)
 {
-  cv::Vec3f euler1 = rotationMatrixToEulerAngles(R1_old);  //R1, R2为Rcw
-  cv::Vec3f euler2 = rotationMatrixToEulerAngles(R2_old);
+  cv::Vec3d euler1 = rotationMatrixToEulerAngles(R1_old);  //R1, R2为Rcw
+  cv::Vec3d euler2 = rotationMatrixToEulerAngles(R2_old);
 
   cv::Matx33d Rx1 = Rotation_x(euler1(0));
   cv::Matx33d Rx2 = Rotation_x(euler2(0));
-  cv::Matx33d Rrect = Rotation_x(CV_PI/2);
 
   cv::Matx33d R1 = Rrect * Rx1.t() * R1_old;
   cv::Vec3d t1 = Rrect * Rx1.t() * t1_old;
@@ -272,8 +271,8 @@ void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_
   R_l = wr * r_r.t();
   R_r = wr * r_r;
 
-  R_l = R_l * Rrect * Rx1.t();
-  R_r = R_r * Rrect * Rx2.t();
+  // R_l = R_l * Rrect * Rx1.t();
+  // R_r = R_r * Rrect * Rx2.t();
 }
 
 void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
@@ -396,6 +395,175 @@ void Fisheye2Perspective(cv::Mat src, cv::Mat dst, float fx, float fy, cv::Matx3
     }
 }
 
+
+
+void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
+{
+  int width = src.cols, height = src.rows;
+  //float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
+  float theta1 = -0*CV_PI/180.0, theta2 = 0*CV_PI/180.0;
+
+  cv::Matx33d Rz = Rotation_z(euler(2));
+  cv::Matx33d Ry = Rotation_y(euler(1));
+  cv::Matx33d Rx = Rotation_x(euler(0));
+
+  float theta = CV_PI/2;
+  cv::Matx33d Rrectx = Rotation_x(theta);
+  cv::Matx33d Rrecty = Rotation_y(theta);
+  cv::Matx33d Rrectz = Rotation_z(theta);
+
+  cv::Matx33d Ryleft = Rotation_y(theta1);
+  cv::Matx33d Ryright = Rotation_y(theta2);
+
+  float fx1 = fx, fx2 = fx, fy1 = fy, fy2 = fy;
+  cv::Vec3f center(0, 0, 1);
+  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
+  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
+
+  for(int i = 0; i < height; i++)
+    for(int j =0; j < width; j++)
+    {
+      cv::Vec3f world_point;
+      if(j < xc)
+      {
+        world_point(0) = (j-xc1)/fx1;
+        world_point(1) = (i-yc1)/fy1;
+        world_point(2) = 1;
+        world_point = Ryleft.t() * world_point;
+      }
+      else
+      {
+        world_point(0) = (j-xc2)/fx2;
+        world_point(1) = (i-yc2)/fy2;
+        world_point(2) = 1;
+        world_point = Ryright.t() * world_point;
+      }
+
+      world_point = Rrectx.t() * world_point;
+      world_point = Rx * world_point;
+
+      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+      int u = pix.x, v = pix.y;
+      if(u >=0 && u < width && v >= 0 && v < height)
+        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
+    }
+}
+
+void upraiseCamera2(cv::Mat src, cv::Mat dst, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
+{
+  int width = src.cols, height = src.rows;
+  float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
+
+  cv::Matx33d Rz = Rotation_z(euler(2));
+  cv::Matx33d Ry = Rotation_y(euler(1));
+  cv::Matx33d Rx = Rotation_x(euler(0));
+
+  float theta = CV_PI/2;
+  cv::Matx33d Rrectx = Rotation_x(theta);
+
+  cv::Vec3f center(0, 0, 1);
+  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
+  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
+
+  for(int i = 0; i < height; i++)
+    for(int j =0; j < width; j++)
+    {
+      cv::Point3f point3d = ocam.Camera2World(cv::Point2f(j,i));
+      cv::Vec3f world_point(point3d.x, point3d.y, point3d.z);
+      world_point = Rx.t() * world_point;
+      world_point = Rrectx * world_point;
+      int u, v;
+      if(j < xc)
+      {
+        world_point = Rotation_y(theta1) * world_point;
+        u = world_point(0)/world_point(2)*fx + xc1;
+        v = world_point(1)/world_point(2)*fy + yc1;
+      }
+      else
+      {
+        world_point = Rotation_y(theta2) * world_point;
+        u = world_point(0)/world_point(2)*fx + xc2;
+        v = world_point(1)/world_point(2)*fy + yc2;
+      }
+      
+      if(u >=0 && u < width && v >= 0 && v < height)
+        dst.at<cv::Vec3b>(v,u) = src.at<cv::Vec3b>(i,j);
+    }
+}
+
+void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R, float fx, float fy, float xc, float yc, FisheyeParam ocam)
+{
+  int width = src.cols, height = src.rows;
+  for(int i = 0; i < height; i++)
+    for(int j = 0; j < width; j++)
+    {
+      cv::Vec3f world_point;
+      world_point(0) = (j-xc)/fx;
+      world_point(1) = (i-yc)/fy;
+      world_point(2) = 1;
+      world_point = R.t() * world_point;
+      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+      int u = pix.x, v = pix.y;
+      if(u >=0 && u < width && v >= 0 && v < height)
+        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
+    }
+}
+
+void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l, cv::Matx33d R_r, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
+{
+  int width = src.cols, height = src.rows;
+  cv::Vec3d center(0, 0, 1);
+
+  cv::Matx33d Rmean = R_l.t() * R_r;
+  cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
+  cv::Rodrigues(rvec, Rmean);
+
+  //cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
+  cv::Vec3d center1 = Rmean * center, center2 = Rmean.t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
+  //float xc1 = xc, yc1 = yc;
+  //float xc2 = xc, yc2 = yc;
+
+  cv::Matx33d Rx = Rotation_x(euler(0));
+  //R_l = R_l * Rrect * Rx.t();
+  //R_r = R_r * Rrect * Rx.t();
+  
+  for(int i = 0; i < height; i++)
+    for(int j =0; j < width; j++)
+    {
+      cv::Vec3d world_point;
+      if(j <= xc)
+      {
+        world_point(0) = (j-xc1)/fx;
+        world_point(1) = (i-yc1)/fy;
+        world_point(2) = 1;
+        world_point = Rmean * world_point;
+        //world_point = R_l.t() * world_point;
+      }
+      else
+      {
+        world_point(0) = (j-xc2)/fx;
+        world_point(1) = (i-yc2)/fy;
+        world_point(2) = 1;
+        world_point = Rmean.t() * world_point;
+        //world_point = R_r.t() * world_point;
+      }
+      
+      world_point = Rrect.t() * world_point;
+      world_point = Rx * world_point;
+
+      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+      int u = pix.x, v = pix.y;
+      if(u >=0 && u < width && v >= 0 && v < height)
+        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
+    }
+}
+
 void twoFisheye2twoPerspective(cv::Mat src1, cv::Mat src2, cv::Mat dst1, cv::Mat dst2, float fx, float fy, 
                                 cv::Matx33d Rrect1, cv::Matx33d Rrect2, FisheyeParam& ocam_model1, FisheyeParam& ocam_model2)
 {
@@ -473,121 +641,36 @@ void twoFisheye2twoPerspective(cv::Mat src1, cv::Mat src2, cv::Mat dst1, cv::Mat
     }
 }
 
-
-void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
+void mergeImagesandDrawLines(cv::Mat img1, cv::Mat img2, cv::Mat img3, cv::Mat img4, cv::Mat& dst)
 {
-  int width = src.cols, height = src.rows;
-  //float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
-  float theta1 = -0*CV_PI/180.0, theta2 = 0*CV_PI/180.0;
-
-  cv::Matx33d Rz = Rotation_z(euler(2));
-  cv::Matx33d Ry = Rotation_y(euler(1));
-  cv::Matx33d Rx = Rotation_x(euler(0));
-
-  float theta = CV_PI/2;
-  cv::Matx33d Rrectx = Rotation_x(theta);
-  cv::Matx33d Rrecty = Rotation_y(theta);
-  cv::Matx33d Rrectz = Rotation_z(theta);
-
-  cv::Matx33d Ryleft = Rotation_y(theta1);
-  cv::Matx33d Ryright = Rotation_y(theta2);
-
-  float fx1 = fx, fx2 = fx, fy1 = fy, fy2 = fy;
-  cv::Vec3f center(0, 0, 1);
-  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
-  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
+  cv::Mat ROI = dst(cv::Rect(0, 0, img1.cols, img2.rows));
+  img1.copyTo(ROI);
+  ROI = dst(cv::Rect(img1.cols, 0, img2.cols, img2.rows));
+  img2.copyTo(ROI);
+  ROI = dst(cv::Rect(img1.cols+img2.cols, 0, img3.cols, img3.rows));
+  img3.copyTo(ROI);
+  ROI = dst(cv::Rect(img1.cols+img2.cols+img3.cols, 0, img4.cols, img4.rows));
+  img4.copyTo(ROI);
+  int count = 0;
+  for(int i = 0; i < dst.rows; i += 20)
+  {
+    cv::Scalar s1(255, 0, 0), s2(0, 255, 0), s3(0, 0, 255);
+    if(count == 0)
     {
-      cv::Vec3f world_point;
-      if(j < xc)
-      {
-        world_point(0) = (j-xc1)/fx1;
-        world_point(1) = (i-yc1)/fy1;
-        world_point(2) = 1;
-        world_point = Ryleft.t() * world_point;
-      }
-      else
-      {
-        world_point(0) = (j-xc2)/fx2;
-        world_point(1) = (i-yc2)/fy2;
-        world_point(2) = 1;
-        world_point = Ryright.t() * world_point;
-      }
-
-      world_point = Rrectx.t() * world_point;
-      world_point = Rx * world_point;
-
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = pix.x, v = pix.y;
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
+      cv::line(dst, cv::Point(0, i), cv::Point(dst.cols, i), s1);
+      ++count;
     }
-}
-
-void upraiseCamera2(cv::Mat src, cv::Mat dst, cv::Vec3f euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
-{
-  int width = src.cols, height = src.rows;
-  float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
-
-  cv::Matx33d Rz = Rotation_z(euler(2));
-  cv::Matx33d Ry = Rotation_y(euler(1));
-  cv::Matx33d Rx = Rotation_x(euler(0));
-
-  float theta = CV_PI/2;
-  cv::Matx33d Rrectx = Rotation_x(theta);
-
-  cv::Vec3f center(0, 0, 1);
-  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
-  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
+    else if(count == 1)
     {
-      cv::Point3f point3d = ocam.Camera2World(cv::Point2f(j,i));
-      cv::Vec3f world_point(point3d.x, point3d.y, point3d.z);
-      world_point = Rx.t() * world_point;
-      world_point = Rrectx * world_point;
-      int u, v;
-      if(j < xc)
-      {
-        world_point = Rotation_y(theta1) * world_point;
-        u = world_point(0)/world_point(2)*fx + xc1;
-        v = world_point(1)/world_point(2)*fy + yc1;
-      }
-      else
-      {
-        world_point = Rotation_y(theta2) * world_point;
-        u = world_point(0)/world_point(2)*fx + xc2;
-        v = world_point(1)/world_point(2)*fy + yc2;
-      }
-      
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(v,u) = src.at<cv::Vec3b>(i,j);
+      cv::line(dst, cv::Point(0, i), cv::Point(dst.cols, i), s2);
+      ++count;
     }
-}
-
-void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R, float fx, float fy, float xc, float yc, FisheyeParam ocam)
-{
-  int width = src.cols, height = src.rows;
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
+    else
     {
-      cv::Vec3f world_point;
-      world_point(0) = (j-xc)/fx;
-      world_point(1) = (i-yc)/fy;
-      world_point(2) = 1;
-      world_point = R.t() * world_point;
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = pix.x, v = pix.y;
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
+      cv::line(dst, cv::Point(0, i), cv::Point(dst.cols, i), s3);
+      count = 0;
     }
+  }
 }
 
 void Onchange(int, void*)
@@ -599,34 +682,47 @@ void Onchange(int, void*)
   //Fisheye2Perspective(src2, result2, fx, fy, R_r, ocam_model2);
   //Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc,ocam_model1);
   //Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc,ocam_model2);
-  // upraiseCamera(src_left, result_left, euler1, fx, fy, xc, yc, ocam_model_left);
-  // upraiseCamera(src_front, result_front, euler2, fx, fy, xc, yc, ocam_model_front);
-  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_r, fx, fy, xc, yc, ocam_model_left);
-  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, fx, fy, xc, yc, ocam_model_front);
+  //upraiseCamera(src_left, result_left, euler_left, fx, fy, xc, yc, ocam_model_left);
+  //upraiseCamera(src_front, result_front, euler_front, fx, fy, xc, yc, ocam_model_front);
+  //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
+  //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
+
+  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
+  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
+  correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
+  correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+
+  mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
 
   cv::imshow( "large image", large);
-  // cv::imshow( "upraiseCamera1", result_left );
+  //cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  // cv::imshow( "two perspective result1", dst_left );
-  // cv::imshow( "two perspective result2", dst_front );
+  cv::imshow( "two perspective result1", dst_left );
+  cv::imshow( "two perspective result2", dst_front );
+  cv::imshow( "two perspective result3", dst_right );
+  cv::imshow( "two perspective result4", dst_back );
 }
 
 int main(int argc, char *argv[])
 {
   Load();
   initImages();
-  fx = 480, fy = 360, xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
+  fx = 280, fy = 360, xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
+  Rrect = Rotation_x(CV_PI/2);
 
-  // euler1 = rotationMatrixToEulerAngles(Rotation_left);  //R为Rcw
-  // euler2 = rotationMatrixToEulerAngles(Rotation_front);
-  // upraiseCamera(src_left, result_left, euler1, fx, fy, xc, yc, ocam_model_left);
-  // upraiseCamera(src_front, result_front, euler2, fx, fy, xc, yc, ocam_model_front);
+  euler_left = rotationMatrixToEulerAngles(Rotation_left);  //R为Rcw
+  euler_front = rotationMatrixToEulerAngles(Rotation_front);
+  euler_right = rotationMatrixToEulerAngles(Rotation_right);
+  euler_back = rotationMatrixToEulerAngles(Rotation_back);
+
+  //upraiseCamera(src_left, result_left, euler_left, fx, fy, xc, yc, ocam_model_left);
+  //upraiseCamera(src_front, result_front, euler_front, fx, fy, xc, yc, ocam_model_front);
 
   //twoFisheye2twoPerspective(src1, src2, dst1, dst2, fx, fy, R_r, R_l, ocam_model1, ocam_model2);
 
 /*
-  cv::Matx33d Rx1 = Rotation_x(euler1(0));
-  cv::Matx33d Rx2 = Rotation_x(euler2(0));
+  cv::Matx33d Rx1 = Rotation_x(euler_left(0));
+  cv::Matx33d Rx2 = Rotation_x(euler_front(0));
   cv::Matx33d Rrect = Rotation_x(CV_PI/2);
   R1 = Rrect * Rx1.t() * R1;
   t1 = Rrect * Rx1.t() * t1;
@@ -639,45 +735,46 @@ int main(int argc, char *argv[])
   //Fisheye2Perspective(dst2, result2, fx, fy, R_r, ocam_model2);
   //Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc, ocam_model1);
   //Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc, ocam_model2);
-  //calculateTwoRotation(R1, t1, R2, t2, euler1, euler2, R_l, R_r);
+  //calculateTwoRotation(R1, t1, R2, t2, euler_left, euler_front, R_l, R_r);
   //calculateTwoRotation(R1, t1, R2, t2, R_l, R_r);
   R_l = R_l * Rrect * Rx1.t();
   R_r = R_r * Rrect * Rx2.t();
 */
 
   calculateTwoCorrectRotation(Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_left_r, Rotation_front_l);
-  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_r, fx, fy, xc, yc, ocam_model_left);
-  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, fx, fy, xc, yc, ocam_model_front);
-  cv::Mat ROI = large(cv::Rect(0, 0, dst_left.cols, dst_left.rows));
-  dst_left.copyTo(ROI);
-  ROI = large(cv::Rect(dst_left.cols, 0, dst_front.cols, dst_front.rows));
-  dst_front.copyTo(ROI);
-  for(int i = 0; i < large.rows; i += 20)
-  {
-    cv::Scalar s1(255, 0, 0), s2(0, 255, 0), s3(0, 0, 255);
-    if(i / 20 % 2)
-      cv::line(large, cv::Point(0, i), cv::Point(large.cols, i), s1);
-    else
-      cv::line(large, cv::Point(0, i), cv::Point(large.cols, i), s2);
-      
-  }
+  calculateTwoCorrectRotation(Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_front_r, Rotation_right_l);
+  calculateTwoCorrectRotation(Rotation_right, Translation_right, Rotation_back, Translation_back, Rotation_right_r, Rotation_back_l);
+  calculateTwoCorrectRotation(Rotation_back, Translation_back, Rotation_left, Translation_left, Rotation_back_r, Rotation_left_l);
+
+  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
+  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
+  correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
+  correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+
+  //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
+  //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
+  mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
 
   cv::namedWindow( "large image", 0 );
-  cv::namedWindow( "Original fisheye camera image1", 0 );
-  cv::namedWindow( "Original fisheye camera image2", 0 );
+  // cv::namedWindow( "Original fisheye camera image1", 0 );
+  // cv::namedWindow( "Original fisheye camera image2", 0 );
   // cv::namedWindow( "upraiseCamera1", 0 );
   // cv::namedWindow( "upraiseCamera2", 0 );
   // cv::namedWindow( "two perspective result1", 0 );
   // cv::namedWindow( "two perspective result2", 0 );
+  // cv::namedWindow( "two perspective result3", 0 );
+  // cv::namedWindow( "two perspective result4", 0 );
   cv::namedWindow( "toolbox", 0 );
 
   cv::imshow( "large image", large);
-  cv::imshow( "Original fisheye camera image1", src_left );
-  cv::imshow( "Original fisheye camera image2", src_front );
+  // cv::imshow( "Original fisheye camera image1", src_left );
+  // cv::imshow( "Original fisheye camera image2", src_front );
   // cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
   // cv::imshow( "two perspective result1", dst_left );
   // cv::imshow( "two perspective result2", dst_front );
+  // cv::imshow( "two perspective result3", dst_right );
+  // cv::imshow( "two perspective result4", dst_back );
 
   cv::createTrackbar("fx", "toolbox", &fx, slider_max, Onchange);
   cv::createTrackbar("fy", "toolbox", &fy, slider_max, Onchange);
@@ -696,10 +793,10 @@ int main(int argc, char *argv[])
   // printf("\nImage %s saved\n","upraiseCamera1.jpg");
   // cv::imwrite("upraiseCamera2.jpg", dst_front);
   // printf("\nImage %s saved\n","upraiseCamera2.jpg");
-  // printf("\nImage %s saved\n","result1.jpg");
-  // cv::imwrite("result1.jpg", dst_left);
-  // printf("\nImage %s saved\n","result2.jpg");
+  //cv::imwrite("result1.jpg", dst_left);
+  //printf("\nImage %s saved\n","result1.jpg");
   // cv::imwrite("result2.jpg", dst_front);
+  // printf("\nImage %s saved\n","result2.jpg");
   cv::imwrite("large.jpg", large);
   printf("\nImage %s saved\n","large.jpg");
 
