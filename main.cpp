@@ -515,15 +515,15 @@ void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R, f
 
 void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l, cv::Matx33d R_r, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
 {
-  int width = src.cols, height = src.rows;
+  int width = dst.cols, height = dst.rows;
   cv::Vec3d center(0, 0, 1);
 
-  cv::Matx33d Rmean = R_l.t() * R_r;
-  cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
-  cv::Rodrigues(rvec, Rmean);
+  //cv::Matx33d Rmean = R_l.t() * R_r;
+  //cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
+  //cv::Rodrigues(rvec, Rmean);
 
-  //cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
-  cv::Vec3d center1 = Rmean * center, center2 = Rmean.t() * center;
+  cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
+  //cv::Vec3d center1 = Rmean * center, center2 = Rmean.t() * center;
   float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
   float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
   //float xc1 = xc, yc1 = yc;
@@ -542,16 +542,16 @@ void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l,
         world_point(0) = (j-xc1)/fx;
         world_point(1) = (i-yc1)/fy;
         world_point(2) = 1;
-        world_point = Rmean * world_point;
-        //world_point = R_l.t() * world_point;
+        //world_point = Rmean * world_point;
+        world_point = R_l.t() * world_point;
       }
       else
       {
         world_point(0) = (j-xc2)/fx;
         world_point(1) = (i-yc2)/fy;
         world_point(2) = 1;
-        world_point = Rmean.t() * world_point;
-        //world_point = R_r.t() * world_point;
+        //world_point = Rmean.t() * world_point;
+        world_point = R_r.t() * world_point;
       }
       
       world_point = Rrect.t() * world_point;
@@ -697,18 +697,21 @@ void Onchange(int, void*)
   cv::imshow( "large image", large);
   //cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  cv::imshow( "two perspective result1", dst_left );
-  cv::imshow( "two perspective result2", dst_front );
-  cv::imshow( "two perspective result3", dst_right );
-  cv::imshow( "two perspective result4", dst_back );
+  //cv::imshow( "two perspective result1", dst_left );
+  //cv::imshow( "two perspective result2", dst_front );
+  //cv::imshow( "two perspective result3", dst_right );
+  //cv::imshow( "two perspective result4", dst_back );
 }
 
 int main(int argc, char *argv[])
 {
   Load();
   initImages();
-  fx = 280, fy = 360, xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
+  fx = 480/2, fy = 360/2, xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
   Rrect = Rotation_x(CV_PI/2);
+
+  std::cout << "水平方向FOV: " << 2 * atan2(xc, fx) / CV_PI * 180 << std::endl;
+  std::cout << "垂直方向FOV: " << 2 * atan2(yc, fy) / CV_PI * 180 << std::endl;
 
   euler_left = rotationMatrixToEulerAngles(Rotation_left);  //R为Rcw
   euler_front = rotationMatrixToEulerAngles(Rotation_front);
