@@ -33,6 +33,8 @@ cv::Matx33d Rotation_right_l, Rotation_right_r, Rotation_back_l, Rotation_back_r
 cv::Vec3d euler_left, euler_front, euler_right, euler_back;
 cv::Matx33d Rrect;
 
+std::vector<cv::DMatch> matches;
+
 cv::Matx33d Rotation_x(float angle)
 {
   //angle = angle * CV_PI / 180;
@@ -537,7 +539,7 @@ void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l,
     for(int j =0; j < width; j++)
     {
       cv::Vec3d world_point;
-      if(j <= xc)
+      if(j < xc)
       {
         world_point(0) = (j-xc1)/fx;
         world_point(1) = (i-yc1)/fy;
@@ -673,6 +675,117 @@ void mergeImagesandDrawLines(cv::Mat img1, cv::Mat img2, cv::Mat img3, cv::Mat i
   }
 }
 
+float ZNCC(cv::Mat img1, cv::Mat img2, cv::Point2i point1, cv::Point2i point2, int size)
+{
+	if (img1.empty() || img1.channels() != 1 || img2.empty() || img2.channels() != 1)
+	{
+		std::cout << "Image error in ZNCC!" << std::endl;
+		return 0;
+	}
+
+	float diff = 0;
+	float l_avg = 0, r_avg = 0;
+	int size2 = (2 * size + 1)*(2 * size + 1);
+	if (point1.x - size >= 0 && point1.x + size < img1.cols && point1.y - size >= 0 && point1.y + size < img1.rows 
+      && point2.x - size >= 0 && point2.x + size < img2.cols && point2.y - size >= 0 && point2.y + size < img2.rows)
+	{
+		for (int i = -size; i <= size; i++)
+		{
+			for (int j = -size; j <= size; j++)
+			{
+				{
+					float v1 = img1.ptr<uchar>(point1.y + i)[point1.x + j];
+					float v2 = img2.ptr<uchar>(point2.y + i)[point2.x + j];
+					l_avg = l_avg + v1 / size2;
+					r_avg = r_avg + v2 / size2;
+				}
+			}
+		}
+ 
+		float lr = 0, ll = 0, rr = 0;//这些是自相关和互相关
+		for (int i = -size; i <= size; i++)
+		{
+			for (int j = -size; j <= size; j++)
+			{
+				float v1 = img1.ptr<uchar>(point1.y + i)[point1.x + j];
+				float v2 = img2.ptr<uchar>(point2.y + i)[point2.x + j];
+				lr += (v1 - l_avg)*(v2 - r_avg);
+				ll += (v1 - l_avg)*(v1 - l_avg);
+				rr += (v2 - r_avg)*(v2 - r_avg);
+			}
+		}
+ 
+		diff = fabs(lr / sqrt(ll*rr));
+	}
+  
+	return diff;
+}
+
+void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& matches, cv::Mat& large)
+{
+  std::vector<cv::KeyPoint> kps1, kps2;
+  cv::Ptr<cv::ORB> orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 20);
+
+  cv::Rect roi1 = cv::Rect(img1.cols/2, 0, img1.cols/2, img1.rows);
+  cv::Rect roi2 = cv::Rect(0, 0, img2.cols/2, img2.rows);
+  cv::Mat mask1 = cv::Mat::zeros(img1.size(), CV_8UC1);
+  mask1(roi1).setTo(255);
+  cv::Mat mask2 = cv::Mat::zeros(img2.size(), CV_8UC1);
+  mask2(roi2).setTo(255);
+
+  cv::Mat dst1, dst2;
+  img1.copyTo(dst1, mask1);
+  img2.copyTo(dst2, mask2);
+
+  //imshow("test1", dst1);
+  //imshow("test2", dst2);
+
+  orb->detect(dst1, kps1);
+  orb->detect(dst2, kps2);
+  
+  cv::Mat desp1, desp2;
+  orb->compute(dst1, kps1, desp1);
+  orb->compute(dst2, kps2, desp2);
+  
+  //std::cout << desp1 << std::endl;
+  //desp1.convertTo(desp1, CV_32F);
+  //desp2.convertTo(desp2, CV_32F);
+
+  //cv::FlannBasedMatcher matcher;
+  cv::BFMatcher matcher(cv::NORM_HAMMING);
+  //cv::FlannBasedMatcher matcher = cv::FlannBasedMatcher(cv::makePtr<cv::flann::LshIndexParams>(12, 20, 2));
+  matcher.match(desp1, desp2, matches);
+  //cv::drawMatches(img1, kps1, img2, kps2, matches, large);
+
+  //cv::Mat dst1, dst2;
+  cv::cvtColor(img1, dst1, CV_BGR2GRAY);
+  cv::cvtColor(img2, dst2, CV_BGR2GRAY);
+
+  std::vector<cv::DMatch> goodMatches;
+  for (int i = 0; i < matches.size(); i++)
+  {
+      cv::Point2f pt1 = kps1[matches[i].queryIdx].pt;
+      cv::Point2f pt2 = kps2[matches[i].trainIdx].pt;
+      float zncc = ZNCC(dst1, dst2, pt1, pt2, 5);
+      //std::cout << zncc << std::endl;
+      if (fabs(pt1.y-pt2.y) < 10 && pt1.x >= pt2.x //pt1.x >= xc && pt2.x <= xc
+          && zncc > 0.8)
+      {
+          goodMatches.push_back(matches[i]);
+      }
+  }
+
+  if(goodMatches.empty())
+  {
+    std::cout << "goodMatches is empty. " << std::endl;
+    return;
+  }
+
+  std::cout << "goodMatches size: " << goodMatches.size() << std::endl;
+  cv::drawMatches(img1, kps1, img2, kps2, goodMatches, large);
+
+}
+
 void Onchange(int, void*)
 {
   initImages();
@@ -692,13 +805,14 @@ void Onchange(int, void*)
   correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
   correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
 
-  mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  calculateMatches(dst_left, dst_front, matches, large);
 
   cv::imshow( "large image", large);
   //cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  //cv::imshow( "two perspective result1", dst_left );
-  //cv::imshow( "two perspective result2", dst_front );
+  cv::imshow( "two perspective result1", dst_left );
+  cv::imshow( "two perspective result2", dst_front );
   //cv::imshow( "two perspective result3", dst_right );
   //cv::imshow( "two perspective result4", dst_back );
 }
@@ -707,8 +821,14 @@ int main(int argc, char *argv[])
 {
   Load();
   initImages();
-  fx = 480/2, fy = 360/2, xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
+  const float FOVx = 140;
+  const float FOVy = 90;
+  xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
   Rrect = Rotation_x(CV_PI/2);
+  fx = xc / tan(FOVx/2 * CV_PI / 180);
+  fy = yc / tan(FOVy/2 * CV_PI / 180);
+  //std::cout << xc / tan(FOV/2 * CV_PI / 180) << std::endl;
+  //std::cout << yc / tan(FOV/2 * CV_PI / 180) << std::endl;
 
   std::cout << "水平方向FOV: " << 2 * atan2(xc, fx) / CV_PI * 180 << std::endl;
   std::cout << "垂直方向FOV: " << 2 * atan2(yc, fy) / CV_PI * 180 << std::endl;
@@ -756,15 +876,16 @@ int main(int argc, char *argv[])
 
   //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
   //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
-  mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  calculateMatches(dst_left, dst_front, matches, large);
 
   cv::namedWindow( "large image", 0 );
   // cv::namedWindow( "Original fisheye camera image1", 0 );
   // cv::namedWindow( "Original fisheye camera image2", 0 );
   // cv::namedWindow( "upraiseCamera1", 0 );
   // cv::namedWindow( "upraiseCamera2", 0 );
-  // cv::namedWindow( "two perspective result1", 0 );
-  // cv::namedWindow( "two perspective result2", 0 );
+  cv::namedWindow( "two perspective result1", 0 );
+  cv::namedWindow( "two perspective result2", 0 );
   // cv::namedWindow( "two perspective result3", 0 );
   // cv::namedWindow( "two perspective result4", 0 );
   cv::namedWindow( "toolbox", 0 );
@@ -774,8 +895,8 @@ int main(int argc, char *argv[])
   // cv::imshow( "Original fisheye camera image2", src_front );
   // cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  // cv::imshow( "two perspective result1", dst_left );
-  // cv::imshow( "two perspective result2", dst_front );
+  cv::imshow( "two perspective result1", dst_left );
+  cv::imshow( "two perspective result2", dst_front );
   // cv::imshow( "two perspective result3", dst_right );
   // cv::imshow( "two perspective result4", dst_back );
 
