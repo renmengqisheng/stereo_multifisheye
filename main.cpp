@@ -11,6 +11,8 @@
 ------------------------------------------------------------------------------*/
 
 #include "fisheye_param.h"
+#include "ORBextractor.h"
+
 #include <iostream>
 #include <string>
 
@@ -20,6 +22,10 @@ cv::Mat large;
 cv::Mat src_left, src_front, src_right, src_back;
 cv::Mat dst_left, dst_front, dst_right, dst_back;
 cv::Mat result_left, result_front, result_right, result_back;
+
+cv::Mat mapx_left, mapx_front, mapx_right, mapx_back;
+cv::Mat mapy_left, mapy_front, mapy_right, mapy_back;
+
 FisheyeParam ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back;
 
 cv::Matx33d Rotation_left, Rotation_front, Rotation_right, Rotation_back;
@@ -27,6 +33,9 @@ cv::Vec3d Translation_left, Translation_front, Translation_right, Translation_ba
 
 // cv::Matx33d Rotation_left2front, Rotation_front2right, Rotation_right2back, Rotation_back2front;
 // cv::Vec3d Translation_left2front, Translation_front2right, Translation_right2back, Translation_back2front;
+
+cv::Matx33d Rotation_left_ideal, Rotation_front_ideal, Rotation_right_ideal, Rotation_back_ideal;
+cv::Vec3d Translation_left_ideal, Translation_front_ideal, Translation_right_ideal, Translation_back_ideal;
 
 cv::Matx33d Rotation_left_l, Rotation_left_r, Rotation_front_l, Rotation_front_r;
 cv::Matx33d Rotation_right_l, Rotation_right_r, Rotation_back_l, Rotation_back_r;
@@ -110,7 +119,7 @@ void Load()
 
 void initImages()
 {
-  large = cv::Mat (src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
+  large = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
 
   dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
   dst_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
@@ -121,6 +130,16 @@ void initImages()
   result_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
   result_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
   result_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
+
+  mapx_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
+  mapx_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
+  mapx_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
+  mapx_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
+
+  mapy_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
+  mapy_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
+  mapy_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
+  mapy_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
 }
 
 // Checks if a matrix is a valid rotation matrix.
@@ -275,6 +294,36 @@ void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_
 
   // R_l = R_l * Rrect * Rx1.t();
   // R_r = R_r * Rrect * Rx2.t();
+}
+
+void calculateTwoCorrectRotation2(const cv::Matx33d& R1, const cv::Vec3d& t1, const cv::Matx33d& R2, const cv::Vec3d& t2, cv::Matx33d& R_l, cv::Matx33d& R_r)
+{
+  cv::Matx33d R = R2 * R1.t();
+  cv::Vec3d tvec = t2 - R * t1;
+
+  cv::Vec3d rvec = cv::Affine3d(R).rvec();
+
+  // rectification algorithm
+  rvec *= -0.5;              // get average rotation
+  cv::Matx33d r_r;
+  Rodrigues(rvec, r_r);  // rotate cameras to same orientation by averaging
+
+  cv::Vec3d t = r_r * tvec;
+  cv::Vec3d uu(t[0] > 0 ? 1 : -1, 0, 0);
+
+  // calculate global Z rotation
+  cv::Vec3d ww = t.cross(uu);
+  double nw = norm(ww);
+  if (nw > 0.0)
+      ww *= acos(fabs(t[0])/cv::norm(t))/nw;
+
+  cv::Matx33d wr;
+  Rodrigues(ww, wr);
+
+  // apply to both views
+  R_l = wr * r_r.t();
+  R_r = wr * r_r;
+
 }
 
 void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
@@ -520,9 +569,9 @@ void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l,
   int width = dst.cols, height = dst.rows;
   cv::Vec3d center(0, 0, 1);
 
-  //cv::Matx33d Rmean = R_l.t() * R_r;
-  //cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
-  //cv::Rodrigues(rvec, Rmean);
+  // cv::Matx33d Rmean = R_l.t() * R_r;
+  // cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
+  // cv::Rodrigues(rvec, Rmean);
 
   cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
   //cv::Vec3d center1 = Rmean * center, center2 = Rmean.t() * center;
@@ -566,80 +615,78 @@ void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l,
     }
 }
 
-void twoFisheye2twoPerspective(cv::Mat src1, cv::Mat src2, cv::Mat dst1, cv::Mat dst2, float fx, float fy, 
-                                cv::Matx33d Rrect1, cv::Matx33d Rrect2, FisheyeParam& ocam_model1, FisheyeParam& ocam_model2)
+void correctCamera_LUT(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d R_r, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
 {
-  if(src1.empty() || dst1.empty() || src2.empty() || dst2.empty())
-  {
-    std::cout << __FILE__ << ": "<< __LINE__ << " error!" << std::endl;
-    return;
-  }
+  int width = mapx.cols, height = mapx.rows;
+  cv::Vec3d center(0, 0, 1);
 
-  cv::Size image_size = dst1.size();
-  
-  float theta1 = 45*CV_PI/180, theta2 = -45*CV_PI/180;
-  float xc1 = xc - fx * tan(theta1), yc1 = yc;
-  float xc2 = xc - fx * tan(theta2), yc2 = yc;
-  
-  // cv::Matx33d Rymean = Ryright * Ryback.t();
-  // cv::Vec3d rvec = cv::Affine3d(Rymean).rvec() * 0.5;
-  // cv::Rodrigues(rvec, Rymean);
+  cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
 
-  for(int i = 0; i < image_size.height; i++)
-    for(int j = 0; j < image_size.width; j++)
+  cv::Matx33d Rx = Rotation_x(euler(0));
+  
+  for(int i = 0; i < height; i++)
+    for(int j =0; j < width; j++)
     {
-      cv::Point3f point3d, point3d1, point3d2;
-      float x, y, z;
-
-      if(j <= xc )
+      cv::Vec3d world_point;
+      if(j < xc)
       {
-        x = (j-xc1) / fx;
-        y = (i-yc1) / fy;
-        z = 1;
-        float theta = -theta1;
-        point3d.x = z*sin(theta) + x*cos(theta);
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
-        cv::Vec3d p(point3d.x,point3d.y,point3d.z);
-        //cv::Vec3d p(x,y,z);
-        p = Rrect2.inv() * p;
-        point3d1.x = point3d.x;
-        point3d1.y = point3d.y;
-        point3d1.z = point3d.z;
-        //point3d1.x = x;
-        //point3d1.y = y;
-        //point3d1.z = z;
-        point3d2.x = p[0];
-        point3d2.y = p[1];
-        point3d2.z = p[2];
+        world_point(0) = (j-xc1)/fx;
+        world_point(1) = (i-yc1)/fy;
+        world_point(2) = 1;
+        world_point = R_l.t() * world_point;
       }
       else
       {
-        x = (j-xc2) / fx;
-        y = (i-yc2) / fy;
-        z = 1;
-        float theta = -theta2;
-        point3d.x = z*sin(theta) + x*cos(theta);
-        point3d.y = y;
-        point3d.z = z*cos(theta) - x*sin(theta);
-        cv::Vec3d p(point3d.x,point3d.y,point3d.z);
-        p = Rrect1.inv() * p;
-        point3d1.x = p[0];
-        point3d1.y = p[1];
-        point3d1.z = p[2];
-        point3d2.x = point3d.x;
-        point3d2.y = point3d.y;
-        point3d2.z = point3d.z;
+        world_point(0) = (j-xc2)/fx;
+        world_point(1) = (i-yc2)/fy;
+        world_point(2) = 1;
+        world_point = R_r.t() * world_point;
       }
-      cv::Point2f point2d1 = ocam_model1.World2Camera(point3d1);
-      cv::Point2f point2d2 = ocam_model2.World2Camera(point3d2);
+      
+      world_point = Rrect.t() * world_point;
+      world_point = Rx * world_point;
 
-      int u1 = point2d1.x, v1 = point2d1.y;
-      int u2 = point2d2.x, v2 = point2d2.y;
-      if(u1 >= 0 && u1 < src1.cols && v1 >= 0 && v1 < src1.rows)
-        dst1.at<cv::Vec3b>(i,j) = src1.at<cv::Vec3b>(v1,u1);
-      if(u2 >= 0 && u2 < src2.cols && v2 >= 0 && v2 < src2.rows)
-        dst2.at<cv::Vec3b>(i,j) = src2.at<cv::Vec3b>(v2,u2);
+      cv::Point2f point2d = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+      mapx.at<float>(i,j) = point2d.x;
+      mapy.at<float>(i,j) = point2d.y;
+    }
+}
+
+void correctCamera_LUT2(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d R_r, cv::Matx33d R_new, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
+{
+  int width = mapx.cols, height = mapx.rows;
+  cv::Vec3d center(0, 0, 1);
+
+  cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
+  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
+  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
+  
+  for(int i = 0; i < height; i++)
+    for(int j =0; j < width; j++)
+    {
+      cv::Vec3d world_point;
+      if(j < xc)
+      {
+        world_point(0) = (j-xc1)/fx;
+        world_point(1) = (i-yc1)/fy;
+        world_point(2) = 1;
+        world_point = R_l.t() * world_point;
+      }
+      else
+      {
+        world_point(0) = (j-xc2)/fx;
+        world_point(1) = (i-yc2)/fy;
+        world_point(2) = 1;
+        world_point = R_r.t() * world_point;
+      }
+      
+      world_point = R_new.t() * world_point;
+
+      cv::Point2f point2d = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+      mapx.at<float>(i,j) = point2d.x;
+      mapy.at<float>(i,j) = point2d.y;
     }
 }
 
@@ -724,7 +771,8 @@ float ZNCC(cv::Mat img1, cv::Mat img2, cv::Point2i point1, cv::Point2i point2, i
 void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& matches, cv::Mat& large)
 {
   std::vector<cv::KeyPoint> kps1, kps2;
-  cv::Ptr<cv::ORB> orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 20);
+  //cv::Ptr<cv::ORB> orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 20);
+  ORB_SLAM2::ORBextractor orb(1000, 1.2f, 8, 31, 8);
 
   cv::Rect roi1 = cv::Rect(img1.cols/2, 0, img1.cols/2, img1.rows);
   cv::Rect roi2 = cv::Rect(0, 0, img2.cols/2, img2.rows);
@@ -734,19 +782,25 @@ void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& match
   mask2(roi2).setTo(255);
 
   cv::Mat dst1, dst2;
+  cv::Mat desp1, desp2;
   img1.copyTo(dst1, mask1);
   img2.copyTo(dst2, mask2);
 
   //imshow("test1", dst1);
   //imshow("test2", dst2);
 
+/*
   orb->detect(dst1, kps1);
   orb->detect(dst2, kps2);
   
-  cv::Mat desp1, desp2;
   orb->compute(dst1, kps1, desp1);
   orb->compute(dst2, kps2, desp2);
-  
+*/
+  cv::cvtColor(dst1, dst1, CV_BGR2GRAY);
+  cv::cvtColor(dst2, dst2, CV_BGR2GRAY);
+  orb(dst1, cv::Mat(), kps1, desp1);
+  orb(dst2, cv::Mat(), kps2, desp2);
+
   //std::cout << desp1 << std::endl;
   //desp1.convertTo(desp1, CV_32F);
   //desp2.convertTo(desp2, CV_32F);
@@ -758,18 +812,17 @@ void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& match
   //cv::drawMatches(img1, kps1, img2, kps2, matches, large);
 
   //cv::Mat dst1, dst2;
-  cv::cvtColor(img1, dst1, CV_BGR2GRAY);
-  cv::cvtColor(img2, dst2, CV_BGR2GRAY);
+  // cv::cvtColor(img1, dst1, CV_BGR2GRAY);
+  // cv::cvtColor(img2, dst2, CV_BGR2GRAY);
 
   std::vector<cv::DMatch> goodMatches;
   for (int i = 0; i < matches.size(); i++)
   {
       cv::Point2f pt1 = kps1[matches[i].queryIdx].pt;
       cv::Point2f pt2 = kps2[matches[i].trainIdx].pt;
-      float zncc = ZNCC(dst1, dst2, pt1, pt2, 5);
+      float zncc = ZNCC(dst1, dst2, pt1, pt2, 15);
       //std::cout << zncc << std::endl;
-      if (fabs(pt1.y-pt2.y) < 10 && pt1.x >= pt2.x //pt1.x >= xc && pt2.x <= xc
-          && zncc > 0.8)
+      if (fabs(pt1.y-pt2.y) < 5 && pt1.x > pt2.x && zncc > 0.8)
       {
           goodMatches.push_back(matches[i]);
       }
@@ -800,19 +853,35 @@ void Onchange(int, void*)
   //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
   //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
 
-  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
-  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
-  correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
-  correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+  // correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
+  // correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
+  // correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
+  // correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+
+  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  // calculateMatches(dst_left, dst_front, matches, large);
+
+  correctCamera_LUT2(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, Rotation_left_ideal, fx, fy, xc, yc, ocam_model_left);
+  correctCamera_LUT2(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, Rotation_front_ideal, fx, fy, xc, yc, ocam_model_front);
+  correctCamera_LUT2(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, Rotation_right_ideal, fx, fy, xc, yc, ocam_model_right);
+  correctCamera_LUT2(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, Rotation_back_ideal, fx, fy, xc, yc, ocam_model_back);
+
+  cv::remap(src_left, dst_left, mapx_left, mapy_left, CV_INTER_LINEAR);
+  cv::remap(src_front, dst_front, mapx_front, mapy_front, CV_INTER_LINEAR);
+  cv::remap(src_right, dst_right, mapx_right, mapy_right, CV_INTER_LINEAR);
+  cv::remap(src_back, dst_back, mapx_back, mapy_back, CV_INTER_LINEAR);
 
   //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
   calculateMatches(dst_left, dst_front, matches, large);
+  //calculateMatches(dst_front, dst_right, matches, large);
+  //calculateMatches(dst_right, dst_back, matches, large);
+  //calculateMatches(dst_back, dst_left, matches, large);
 
   cv::imshow( "large image", large);
   //cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  cv::imshow( "two perspective result1", dst_left );
-  cv::imshow( "two perspective result2", dst_front );
+  // cv::imshow( "two perspective result1", dst_left );
+  // cv::imshow( "two perspective result2", dst_front );
   //cv::imshow( "two perspective result3", dst_right );
   //cv::imshow( "two perspective result4", dst_back );
 }
@@ -821,8 +890,8 @@ int main(int argc, char *argv[])
 {
   Load();
   initImages();
-  const float FOVx = 140;
-  const float FOVy = 90;
+  const float FOVx = 160;
+  const float FOVy = 120;
   xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
   Rrect = Rotation_x(CV_PI/2);
   fx = xc / tan(FOVx/2 * CV_PI / 180);
@@ -864,6 +933,8 @@ int main(int argc, char *argv[])
   R_r = R_r * Rrect * Rx2.t();
 */
 
+
+/*
   calculateTwoCorrectRotation(Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_left_r, Rotation_front_l);
   calculateTwoCorrectRotation(Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_front_r, Rotation_right_l);
   calculateTwoCorrectRotation(Rotation_right, Translation_right, Rotation_back, Translation_back, Rotation_right_r, Rotation_back_l);
@@ -873,19 +944,50 @@ int main(int argc, char *argv[])
   correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
   correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
   correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+  correctCamera_LUT(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
+  correctCamera_LUT(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
+  correctCamera_LUT(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
+  correctCamera_LUT(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+*/
+  cv::Matx33d Rx = Rotation_x(CV_PI/2);
+  Rotation_left_ideal = Rx * Rotation_z(-CV_PI/2) * Rotation_left.t();
+  Rotation_front_ideal = Rx * Rotation_front.t();
+  Rotation_right_ideal = Rx * Rotation_z(CV_PI/2) * Rotation_right.t();
+  Rotation_back_ideal = Rx * Rotation_z(CV_PI) * Rotation_back.t();
 
-  //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
-  //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
+  Translation_left_ideal = Rotation_left_ideal * Translation_left;
+  Translation_front_ideal = Rotation_front_ideal * Translation_front;
+  Translation_right_ideal = Rotation_right_ideal * Translation_right;
+  Translation_back_ideal = Rotation_back_ideal * Translation_back;
+
+  calculateTwoCorrectRotation2(Rotation_left_ideal*Rotation_left, Translation_left_ideal, Rotation_front_ideal*Rotation_front, Translation_front_ideal, Rotation_left_r, Rotation_front_l);
+  calculateTwoCorrectRotation2(Rotation_front_ideal*Rotation_front, Translation_front_ideal, Rotation_right_ideal*Rotation_right, Translation_right_ideal, Rotation_front_r, Rotation_right_l);
+  calculateTwoCorrectRotation2(Rotation_right_ideal*Rotation_right, Translation_right_ideal, Rotation_back_ideal*Rotation_back, Translation_back_ideal, Rotation_right_r, Rotation_back_l);
+  calculateTwoCorrectRotation2(Rotation_back_ideal*Rotation_back, Translation_back_ideal, Rotation_left_ideal*Rotation_left, Translation_left_ideal, Rotation_back_r, Rotation_left_l);
+
+  correctCamera_LUT2(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, Rotation_left_ideal, fx, fy, xc, yc, ocam_model_left);
+  correctCamera_LUT2(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, Rotation_front_ideal, fx, fy, xc, yc, ocam_model_front);
+  correctCamera_LUT2(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, Rotation_right_ideal, fx, fy, xc, yc, ocam_model_right);
+  correctCamera_LUT2(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, Rotation_back_ideal, fx, fy, xc, yc, ocam_model_back);
+
+  cv::remap(src_left, dst_left, mapx_left, mapy_left, CV_INTER_LINEAR);
+  cv::remap(src_front, dst_front, mapx_front, mapy_front, CV_INTER_LINEAR);
+  cv::remap(src_right, dst_right, mapx_right, mapy_right, CV_INTER_LINEAR);
+  cv::remap(src_back, dst_back, mapx_back, mapy_back, CV_INTER_LINEAR);
+
   //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
-  calculateMatches(dst_left, dst_front, matches, large);
+  //calculateMatches(dst_left, dst_front, matches, large);
+  //calculateMatches(dst_front, dst_right, matches, large);
+  //calculateMatches(dst_right, dst_back, matches, large);
+  calculateMatches(dst_back, dst_left, matches, large);
 
   cv::namedWindow( "large image", 0 );
   // cv::namedWindow( "Original fisheye camera image1", 0 );
   // cv::namedWindow( "Original fisheye camera image2", 0 );
   // cv::namedWindow( "upraiseCamera1", 0 );
   // cv::namedWindow( "upraiseCamera2", 0 );
-  cv::namedWindow( "two perspective result1", 0 );
-  cv::namedWindow( "two perspective result2", 0 );
+  // cv::namedWindow( "two perspective result1", 0 );
+  // cv::namedWindow( "two perspective result2", 0 );
   // cv::namedWindow( "two perspective result3", 0 );
   // cv::namedWindow( "two perspective result4", 0 );
   cv::namedWindow( "toolbox", 0 );
@@ -895,8 +997,8 @@ int main(int argc, char *argv[])
   // cv::imshow( "Original fisheye camera image2", src_front );
   // cv::imshow( "upraiseCamera1", result_left );
   // cv::imshow( "upraiseCamera2", result_front );
-  cv::imshow( "two perspective result1", dst_left );
-  cv::imshow( "two perspective result2", dst_front );
+  // cv::imshow( "two perspective result1", dst_left );
+  // cv::imshow( "two perspective result2", dst_front );
   // cv::imshow( "two perspective result3", dst_right );
   // cv::imshow( "two perspective result4", dst_back );
 
