@@ -23,6 +23,8 @@ cv::Mat src_left, src_front, src_right, src_back;
 cv::Mat dst_left, dst_front, dst_right, dst_back;
 cv::Mat result_left, result_front, result_right, result_back;
 
+cv::Mat topview_full;
+
 cv::Mat mapx_left, mapx_front, mapx_right, mapx_back;
 cv::Mat mapy_left, mapy_front, mapy_right, mapy_back;
 
@@ -119,6 +121,8 @@ void Load()
 
 void initImages()
 {
+  topview_full = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
+
   large = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
 
   dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
@@ -660,6 +664,7 @@ void correctCamera_LUT2(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d
   cv::Vec3d center(0, 0, 1);
 
   cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
+  //cv::Vec3d center1 = R_new.t() * R_l.t() * center, center2 = R_new.t() * R_r.t() * center;
   float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
   float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
   
@@ -772,19 +777,21 @@ void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& match
 {
   std::vector<cv::KeyPoint> kps1, kps2;
   //cv::Ptr<cv::ORB> orb = cv::ORB::create(1000, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 20);
-  ORB_SLAM2::ORBextractor orb(1000, 1.2f, 8, 31, 8);
+  ORB_SLAM2::ORBextractor orb(2000, 1.2f, 8, 31, 8);
 
-  cv::Rect roi1 = cv::Rect(img1.cols/2, 0, img1.cols/2, img1.rows);
-  cv::Rect roi2 = cv::Rect(0, 0, img2.cols/2, img2.rows);
-  cv::Mat mask1 = cv::Mat::zeros(img1.size(), CV_8UC1);
-  mask1(roi1).setTo(255);
-  cv::Mat mask2 = cv::Mat::zeros(img2.size(), CV_8UC1);
-  mask2(roi2).setTo(255);
+  // cv::Rect roi1 = cv::Rect(img1.cols/2, 0, img1.cols/2, img1.rows);
+  // cv::Rect roi2 = cv::Rect(0, 0, img2.cols/2, img2.rows);
+  // cv::Mat mask1 = cv::Mat::zeros(img1.size(), CV_8UC1);
+  // mask1(roi1).setTo(255);
+  // cv::Mat mask2 = cv::Mat::zeros(img2.size(), CV_8UC1);
+  // mask2(roi2).setTo(255);
 
   cv::Mat dst1, dst2;
   cv::Mat desp1, desp2;
-  img1.copyTo(dst1, mask1);
-  img2.copyTo(dst2, mask2);
+  // img1.copyTo(dst1, mask1);
+  // img2.copyTo(dst2, mask2);
+  img1.copyTo(dst1);
+  img2.copyTo(dst2);
 
   //imshow("test1", dst1);
   //imshow("test2", dst2);
@@ -838,6 +845,145 @@ void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& match
   cv::drawMatches(img1, kps1, img2, kps2, goodMatches, large);
 
 }
+
+
+void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Mat back, 
+             cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
+             FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
+{
+  int width = output.cols;
+  int height = output.rows;
+  float k = (float)height / width;
+  float scale = 38;
+  float fx = scale, fy = scale*k;
+  float theta = 36 * CV_PI / 180;
+  cv::Point2f point2d;
+  for(int i = 0; i < height; i++)
+    for(int j = 0; j < width; j++)
+    {
+      float x = j - width/2, y = i - height/2;
+      float tan_theta = tan(theta);
+      cv::Vec3f world_point(x / fx, y / fy, 0);
+      if(x < y * tan_theta && x < -y * tan_theta)
+      {
+        world_point = R_l * world_point;
+        world_point = world_point + t_l;
+        point2d = ocam_left.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+        int u = point2d.x, v = point2d.y;
+        if(u >= 0 && u < left.cols && v >= 0 && v < left.rows)
+          output.at<cv::Vec3b>(i,j) = left.at<cv::Vec3b>(v, u);
+      }
+      else if(x > y * tan_theta && x < -y * tan_theta)
+      {
+        world_point = R_f * world_point;
+        world_point = world_point + t_f;
+        point2d = ocam_front.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+        int u = point2d.x, v = point2d.y;
+        if(u >= 0 && u < front.cols && v >= 0 && v < front.rows)
+          output.at<cv::Vec3b>(i,j) = front.at<cv::Vec3b>(v, u);
+      }
+      else if(x > -y * tan_theta && x > y * tan_theta)
+      {
+        // cv::Vec3f t = R_r.t() * t_r;
+        // world_point = world_point + t;
+        world_point = R_r * world_point;
+        world_point = world_point + t_r;
+        point2d = ocam_right.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+        int u = point2d.x, v = point2d.y;
+        // int u = point2d.x * fx, v = point2d.y * fy;
+        if(u >= 0 && u < right.cols && v >= 0 && v < right.rows)
+          output.at<cv::Vec3b>(i,j) = right.at<cv::Vec3b>(v, u);
+      }
+      else// if(x > -y * tan_theta && x < y * tan_theta)
+      {
+        world_point = R_b * world_point;
+        world_point = world_point + t_b;
+        point2d = ocam_back.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
+        int u = point2d.x, v = point2d.y;
+        if(u >= 0 && u < back.cols && v >= 0 && v < back.rows)
+          output.at<cv::Vec3b>(i,j) = back.at<cv::Vec3b>(v, u);
+      }
+    }
+}
+
+
+void topview1(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Mat back, 
+             cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
+             FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
+{
+  int w = left.cols;
+  int h = left.rows;
+  int xc = output.cols/2;
+  int yc = output.rows/2;
+  float k = (float)h/w;
+  int fx = 38;
+  int fy = fx * k;
+  for(int i = 0; i < h; i++)
+    for(int j = 0; j < w; j++)
+    {
+      cv::Point3f p3d = ocam_left.Camera2World(cv::Point2f((float)j, (float)i));
+      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
+      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
+      wp -= t_l;
+      wp = R_l.t() * wp;
+      int u = wp(0)/wp(2) * fx + xc;
+      int v = wp(1)/wp(2) * fy + yc;
+
+      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
+        output.at<cv::Vec3b>(v,u) = left.at<cv::Vec3b>(i,j);
+    }
+
+  w = front.cols;
+  h = front.rows;
+  for(int i = 0; i < h; i++)
+    for(int j = 0; j < w; j++)
+    {
+      cv::Point3f p3d = ocam_front.Camera2World(cv::Point2f(j, i));
+      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
+      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
+      wp -= t_f;
+      wp = R_f.t() * wp;
+      int u = wp(0)/wp(2) * fx + xc;
+      int v = wp(1)/wp(2) * fy + yc;
+      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
+        output.at<cv::Vec3b>(v,u) = front.at<cv::Vec3b>(i,j);
+    }
+  
+  w = right.cols;
+  h = right.rows;
+  for(int i = 0; i < h; i++)
+    for(int j = 0; j < w; j++)
+    {
+      cv::Point3f p3d = ocam_right.Camera2World(cv::Point2f(j, i));
+      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
+      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
+      wp -= t_r;
+      wp = R_r.t() * wp;
+      int u = wp(0)/wp(2) * fx + xc;
+      int v = wp(1)/wp(2) * fy + yc;
+      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
+        output.at<cv::Vec3b>(v,u) = right.at<cv::Vec3b>(i,j);
+    }
+
+  w = back.cols;
+  h = back.rows;
+  for(int i = 0; i < h; i++)
+    for(int j = 0; j < w; j++)
+    {
+      cv::Point3f p3d = ocam_back.Camera2World(cv::Point2f(j, i));
+      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
+      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
+      wp -= t_b;
+      wp = R_b.t() * wp;
+      int u = wp(0)/wp(2) * fx + xc;
+      int v = wp(1)/wp(2) * fy + yc;
+      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
+        output.at<cv::Vec3b>(v,u) = back.at<cv::Vec3b>(i,j);
+  
+    }
+}
+
+
 
 void Onchange(int, void*)
 {
@@ -981,6 +1127,10 @@ int main(int argc, char *argv[])
   //calculateMatches(dst_right, dst_back, matches, large);
   calculateMatches(dst_back, dst_left, matches, large);
 
+  topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
+
+  cv::namedWindow( "topview", 0 );
+
   cv::namedWindow( "large image", 0 );
   // cv::namedWindow( "Original fisheye camera image1", 0 );
   // cv::namedWindow( "Original fisheye camera image2", 0 );
@@ -991,6 +1141,8 @@ int main(int argc, char *argv[])
   // cv::namedWindow( "two perspective result3", 0 );
   // cv::namedWindow( "two perspective result4", 0 );
   cv::namedWindow( "toolbox", 0 );
+
+  cv::imshow( "topview", topview_full);
 
   cv::imshow( "large image", large);
   // cv::imshow( "Original fisheye camera image1", src_left );
