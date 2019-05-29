@@ -11,14 +11,16 @@
 ------------------------------------------------------------------------------*/
 
 #include "fisheye_param.h"
-#include "ORBextractor.h"
+#include "Frame.h"
+#include "ORBmatcher.h"
+#include "multi_fisheye_param.h"
 
 #include <iostream>
 #include <string>
 
 const int slider_max = 5000;
-int fx, fy, xc, yc;
-cv::Mat large;
+double fx, fy, xc, yc;
+cv::Mat large, large1, large2, large3, large4;
 cv::Mat src_left, src_front, src_right, src_back;
 cv::Mat dst_left, dst_front, dst_right, dst_back;
 cv::Mat result_left, result_front, result_right, result_back;
@@ -33,19 +35,22 @@ FisheyeParam ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_bac
 cv::Matx33d Rotation_left, Rotation_front, Rotation_right, Rotation_back;
 cv::Vec3d Translation_left, Translation_front, Translation_right, Translation_back;
 
-// cv::Matx33d Rotation_left2front, Rotation_front2right, Rotation_right2back, Rotation_back2front;
-// cv::Vec3d Translation_left2front, Translation_front2right, Translation_right2back, Translation_back2front;
-
 cv::Matx33d Rotation_left_ideal, Rotation_front_ideal, Rotation_right_ideal, Rotation_back_ideal;
 cv::Vec3d Translation_left_ideal, Translation_front_ideal, Translation_right_ideal, Translation_back_ideal;
 
 cv::Matx33d Rotation_left_l, Rotation_left_r, Rotation_front_l, Rotation_front_r;
 cv::Matx33d Rotation_right_l, Rotation_right_r, Rotation_back_l, Rotation_back_r;
-cv::Vec3d euler_left, euler_front, euler_right, euler_back;
+
 cv::Matx33d Rrect;
 
 std::vector<cv::DMatch> matches;
 
+const int ROWS = 800;
+const int COLS = 800;
+
+multi_fisheye_param multi;
+
+//坐标轴旋转
 cv::Matx33d Rotation_x(float angle)
 {
   //angle = angle * CV_PI / 180;
@@ -88,7 +93,7 @@ void readTransformation(std::string filename, cv::Matx33d& R, cv::Vec3d& t)
   t = cv::Vec3d(T(0,3), T(1,3), T(2,3));
   result_in.close();
 
-  translateTwc2Tcw(R, t);
+  // translateTwc2Tcw(R, t);
 }
 
 void Load()
@@ -113,6 +118,11 @@ void Load()
   src_back = cv::imread("../bmp/frame_vc12_1814.bmp"); 
   assert(!src_back.empty());
 
+  // cv::cvtColor(src_left, dst_left, CV_BGR2GRAY);
+  // cv::cvtColor(src_front, dst_front, CV_BGR2GRAY);
+  // cv::cvtColor(src_right, dst_right, CV_BGR2GRAY);
+  // cv::cvtColor(src_back, dst_back, CV_BGR2GRAY);
+
   readTransformation("../result/left.txt", Rotation_left, Translation_left);  //Rcw, tcw
   readTransformation("../result/front.txt", Rotation_front, Translation_front);
   readTransformation("../result/right.txt", Rotation_right, Translation_right);
@@ -121,29 +131,52 @@ void Load()
 
 void initImages()
 {
-  topview_full = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
+  // topview_full = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
 
-  large = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
+  // large1 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
+  // large2 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
+  // large3 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
+  // large4 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
 
-  dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
-  dst_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
-  dst_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
-  dst_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
+  // dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
+  // dst_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
+  // dst_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
+  // dst_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
 
-  result_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
-  result_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
-  result_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
-  result_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
+  // result_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
+  // result_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
+  // result_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
+  // result_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
 
-  mapx_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
-  mapx_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
-  mapx_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
-  mapx_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapx_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapx_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapx_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapx_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
 
-  mapy_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
-  mapy_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
-  mapy_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
-  mapy_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapy_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapy_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapy_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
+  // mapy_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
+
+
+  large = cv::Mat(ROWS, COLS*8, src_left.type(), cv::Scalar::all(0));
+
+  large1 = cv::Mat(ROWS, COLS*4, src_left.type(), cv::Scalar::all(0));
+  large2 = cv::Mat(ROWS, COLS*4, src_left.type(), cv::Scalar::all(0));
+  large3 = cv::Mat(ROWS, COLS*4, src_left.type(), cv::Scalar::all(0));
+  large4 = cv::Mat(ROWS, COLS*4, src_left.type(), cv::Scalar::all(0));
+
+  mapx_left = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapx_front = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapx_right = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapx_back = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+
+  mapy_left = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapy_front = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapy_right = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+  mapy_back = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
+
+
 }
 
 // Checks if a matrix is a valid rotation matrix.
@@ -156,122 +189,11 @@ bool isRotationMatrix(const cv::Matx33d &R)
     return  norm(I, shouldBeIdentity) < 1e-5;
 }
 
-// Calculates rotation matrix to euler angles(the order is z first, then x, y last).
-cv::Vec3d rotationMatrixToEulerAngles(const cv::Matx33d &R)
+//R1, R2为Rcw
+void calculateTwoCorrectRotation2(const cv::Matx33d& R1, const cv::Vec3d& t1, const cv::Matx33d& R2, const cv::Vec3d& t2, cv::Matx33d& R_l, cv::Matx33d& R_r, double& baseline)
 {
-    assert(isRotationMatrix(R));
-
-    //float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(1,0) * R.at<double>(1,0));
-    float sy = sqrt(R(0,0) * R(0,0) +  R(0,1) * R(0,1));
-    //float sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) +  R.at<double>(0,2) * R.at<double>(0,2));
-    bool singular = sy < 1e-5; // If
- 
-    cv::Vec3d result;
-    if (!singular)
-    {
-        //先绕x再绕y最后绕z旋转, don't work
-        /*
-        x = atan2(R.at<double>(2,1) , R.at<double>(2,2));
-        y = atan2(-R.at<double>(2,0), sy);
-        z = atan2(R.at<double>(1,0), R.at<double>(0,0));
-        */
-        //先绕z再绕y最后绕x旋转, work
-        
-        result(0) = atan2(R(1,2) , R(2,2));
-        result(1) = atan2(-R(0,2), sy);
-        result(2) = atan2(R(0,1), R(0,0));
-        
-        //先绕y再绕z最后绕x旋转, don't work
-        /*
-        x = atan2(-R.at<double>(2,1) , R.at<double>(1,1));
-        y = atan2(-R.at<double>(0,2), R.at<double>(0,0));
-        z = atan2(R.at<double>(0,1), sy);
-        */
-        
-    }
-    else
-    {
-        //先绕x再绕y最后绕z旋转, don't work
-        /*
-        x = atan2(-R.at<double>(1,2), R.at<double>(1,1));
-        y = atan2(-R.at<double>(2,0), sy);
-        z = 0;
-        */
-        //先绕z再绕y最后绕x旋转, work
-        
-        result(0) = atan2(R(1,0), R(2,0));
-        result(1) = atan2(-R(0,2), sy);
-        result(2) = 0;
-        
-        //先绕y再绕z最后绕x旋转, don't work
-        /*
-        x = atan2(R.at<double>(1,2), R.at<double>(2,2));
-        y = 0;
-        z = atan2(R.at<double>(0,1), sy);
-        */
-    }
-
-    return result;
-}
-
-void calculateTwoRotation(cv::Matx33d R, cv::Vec3d tvec, cv::Matx33d& R1, cv::Matx33d& R2)
-{
-  cv::Vec3d rvec = cv::Affine3d(R).rvec();
-
-  // rectification algorithm
-  rvec *= -0.5;              // get average rotation
-
-  cv::Matx33d r_r;
-  Rodrigues(rvec, r_r);  // rotate cameras to same orientation by averaging
-  cv::Vec3d t = r_r * tvec;
-
-  // double nt = norm(t);
-  // if(nt > 0.0)
-  //   t /= nt;
-  // cv::Vec3d uu(0, 0, t(0) > 0 ? 1 : -1);
-  // cv::Vec3d ww = t.cross(uu);
-  // double nw = norm(ww);
-  // if(nw > 0.0)
-  //   ww /= nw;
-  // cv::Vec3d vv = t.cross(ww);
-  // double nv = norm(vv);
-  // if(nv > 0.0)
-  //   vv /= nv;
-  // cv::Matx33d Rrect(t(0), t(1), t(2), ww(0), ww(1), ww(2), vv(0), vv(1), vv(2));
-  // R1 = Rrect * r_r.t();
-  // R2 = Rrect * r_r;
-
-  cv::Vec3d uu(t[0] > 0 ? 1 : -1, 0, 0);
-
-  // calculate global Z rotation
-  cv::Vec3d ww = t.cross(uu);
-  double nw = norm(ww);
-  if (nw > 0.0)
-      ww *= acos(fabs(t[0])/cv::norm(t))/nw;
-
-  cv::Matx33d wr;
-  Rodrigues(ww, wr);
-
-  // apply to both views
-  R1 = wr * r_r.t();
-  R2 = wr * r_r;
-}
-
-void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_old, const cv::Matx33d& R2_old, const cv::Vec3d& t2_old, cv::Matx33d& R_l, cv::Matx33d& R_r)
-{
-  cv::Vec3d euler1 = rotationMatrixToEulerAngles(R1_old);  //R1, R2为Rcw
-  cv::Vec3d euler2 = rotationMatrixToEulerAngles(R2_old);
-
-  cv::Matx33d Rx1 = Rotation_x(euler1(0));
-  cv::Matx33d Rx2 = Rotation_x(euler2(0));
-
-  cv::Matx33d R1 = Rrect * Rx1.t() * R1_old;
-  cv::Vec3d t1 = Rrect * Rx1.t() * t1_old;
-  cv::Matx33d R2 = Rrect * Rx2.t() * R2_old;
-  cv::Vec3d t2 = Rrect * Rx2.t() * t2_old;
-
-  cv::Matx33d R = R2 * R1.t();
-  cv::Vec3d tvec = t2 - R * t1;
+  cv::Matx33d R = R2 * R1.t();  //Rcw,tcw
+  cv::Vec3d tvec = R2 * (t1 - t2);
 
   cv::Vec3d rvec = cv::Affine3d(R).rvec();
 
@@ -287,7 +209,7 @@ void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_
   cv::Vec3d ww = t.cross(uu);
   double nw = norm(ww);
   if (nw > 0.0)
-      ww *= acos(fabs(t[0])/cv::norm(t))/nw;
+      ww *= acos(fabs(t[0])/cv::norm(t))/nw;  //求向量t和uu的夹角Θ，绕向量ww旋转Θ
 
   cv::Matx33d wr;
   Rodrigues(ww, wr);
@@ -295,341 +217,22 @@ void calculateTwoCorrectRotation(const cv::Matx33d& R1_old, const cv::Vec3d& t1_
   // apply to both views
   R_l = wr * r_r.t();
   R_r = wr * r_r;
-
-  // R_l = R_l * Rrect * Rx1.t();
-  // R_r = R_r * Rrect * Rx2.t();
-}
-
-void calculateTwoCorrectRotation2(const cv::Matx33d& R1, const cv::Vec3d& t1, const cv::Matx33d& R2, const cv::Vec3d& t2, cv::Matx33d& R_l, cv::Matx33d& R_r)
-{
-  cv::Matx33d R = R2 * R1.t();
-  cv::Vec3d tvec = t2 - R * t1;
-
-  cv::Vec3d rvec = cv::Affine3d(R).rvec();
-
-  // rectification algorithm
-  rvec *= -0.5;              // get average rotation
-  cv::Matx33d r_r;
-  Rodrigues(rvec, r_r);  // rotate cameras to same orientation by averaging
-
-  cv::Vec3d t = r_r * tvec;
-  cv::Vec3d uu(t[0] > 0 ? 1 : -1, 0, 0);
-
-  // calculate global Z rotation
-  cv::Vec3d ww = t.cross(uu);
-  double nw = norm(ww);
-  if (nw > 0.0)
-      ww *= acos(fabs(t[0])/cv::norm(t))/nw;
-
-  cv::Matx33d wr;
-  Rodrigues(ww, wr);
-
-  // apply to both views
-  R_l = wr * r_r.t();
-  R_r = wr * r_r;
-
-}
-
-void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
-{
-  cv::Size image_size = src.size();
-  float theta1 = -45*CV_PI/180.0, theta2 = 45*CV_PI/180.0;
-
-  if(src.empty() || dst.empty())
-  {
-    std::cout << __FILE__ << ": "<< __LINE__ << " error!" << std::endl;
-    return;
-  }
-
-  cv::Vec3f center(0, 0, 1);
-  cv::Vec3f center1 = Rotation_y(-(theta2-theta1)/2).t() * center;
-  cv::Vec3f center2 = Rotation_y((theta2-theta1)/2).t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2); //theta1 < 0 theta2 > 0 找到左右针孔的主点
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-  
-  for(int i = 0; i < image_size.height; i++)
-    for(int j = 0; j < image_size.width; j++)
-    {
-      cv::Vec3f world_point;
-      if(j <= xc)
-      {
-        world_point(0) = (j-xc1) / fx;
-        world_point(1) = (i-yc1) / fy;
-        world_point(2) = 1;
-        float theta = -(theta2-theta1)/2;
-        world_point = Rotation_y(theta).t() * world_point;  //转回原相机坐标系
-      }
-      else
-      {
-        world_point(0) = (j-xc2) / fx;
-        world_point(1) = (i-yc2) / fy;
-        world_point(2) = 1;
-        float theta = (theta2-theta1)/2;
-        world_point = Rotation_y(theta).t() * world_point;  //转回原相机坐标系
-      }
-      cv::Point2f point2d = ocam_model.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = point2d.x, v = point2d.y;
-      if(u >= 0 && u < src.cols && v >= 0 && v < src.rows)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
-    }
-}
-
-/*
-void Fisheye2twoPerspective(cv::Mat src, cv::Mat dst, float fx, float fy, float xc, float yc, FisheyeParam& ocam_model)
-{
-  cv::Size image_size = src.size();
-  float theta1 = -45*CV_PI/180.0, theta2 = 10*CV_PI/180.0;
-  for(int i = 0; i < image_size.height; i++)
-    for(int j = 0; j < image_size.width; j++)
-    {
-      cv::Point2f point2d;
-      point2d.x = j;
-      point2d.y = i;
-      cv::Point3f point3d = ocam_model.Camera2World(point2d);
-      float x = point3d.x;
-      float y = point3d.y;
-      float z = point3d.z;
-      int u, v;
-      if(x <= tan((theta1+theta2)/2)*point3d.z)
-      {
-        float alpha = -(theta2-theta1)/2;
-        point3d.x = -z*sin(theta1) + x*cos(theta1);
-        point3d.y = y; 
-        point3d.z = z*cos(theta1) + x*sin(theta1);
-        //u = point3d.x/point3d.z*fx + xc - fx*tan(theta1);
-        u = point3d.x/point3d.z*fx + xc + fx*tan(alpha);
-        v = point3d.y/point3d.z*fy + yc;
-      }
-      else
-      {
-        float alpha = (theta2-theta1)/2;
-        point3d.x = -z*sin(theta2) + x*cos(theta2);
-        point3d.y = y;
-        point3d.z = z*cos(theta2) + x*sin(theta2);
-        //u = point3d.x/point3d.z*fx + xc - fx*tan(theta2);
-        u = point3d.x/point3d.z*fx + xc + fx*tan(alpha);
-        v = point3d.y/point3d.z*fy + yc;
-      }
-      
-      if(u >= 0 && u < dst.cols && v >= 0 && v < dst.rows)
-        dst.at<cv::Vec3b>(v, u) = src.at<cv::Vec3b>(i,j);
-    }
-}
-*/
-
-void Fisheye2Perspective(cv::Mat src, cv::Mat dst, float fx, float fy, cv::Matx33d Rrect, FisheyeParam& ocam_model)
-{
-  if(src.empty() || dst.empty())
-  {
-    std::cout << __FILE__ << ": "<< __LINE__ << " error!" << std::endl;
-    return;
-  }
-
-  cv::Size image_size = dst.size();
-  for(int i = 0; i < image_size.height; i++)
-    for(int j = 0; j < image_size.width; j++)
-    {
-      cv::Point3f point3d;
-      float x, y, z;
-
-      
-      x = (j - xc) / fx;
-      y = (i - yc) / fy;
-      z = 1;
-      cv::Vec3d p(x,y,z);
-      p = Rrect.t() * p;
-      point3d.x = p[0];
-      point3d.y = p[1];
-      point3d.z = p[2];
-      
-      cv::Point2f point2d = ocam_model.World2Camera(point3d);
-
-      int u = point2d.x, v = point2d.y;
-      if(u >= 0 && u < src.cols && v >= 0 && v < src.rows)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
-    }
+  cv::Vec3d tnew = R_r * tvec;
+  baseline = fabs(tnew[0]);
 }
 
 
-
-void upraiseCamera(cv::Mat src, cv::Mat dst, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
-{
-  int width = src.cols, height = src.rows;
-  //float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
-  float theta1 = -0*CV_PI/180.0, theta2 = 0*CV_PI/180.0;
-
-  cv::Matx33d Rz = Rotation_z(euler(2));
-  cv::Matx33d Ry = Rotation_y(euler(1));
-  cv::Matx33d Rx = Rotation_x(euler(0));
-
-  float theta = CV_PI/2;
-  cv::Matx33d Rrectx = Rotation_x(theta);
-  cv::Matx33d Rrecty = Rotation_y(theta);
-  cv::Matx33d Rrectz = Rotation_z(theta);
-
-  cv::Matx33d Ryleft = Rotation_y(theta1);
-  cv::Matx33d Ryright = Rotation_y(theta2);
-
-  float fx1 = fx, fx2 = fx, fy1 = fy, fy2 = fy;
-  cv::Vec3f center(0, 0, 1);
-  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
-  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
-    {
-      cv::Vec3f world_point;
-      if(j < xc)
-      {
-        world_point(0) = (j-xc1)/fx1;
-        world_point(1) = (i-yc1)/fy1;
-        world_point(2) = 1;
-        world_point = Ryleft.t() * world_point;
-      }
-      else
-      {
-        world_point(0) = (j-xc2)/fx2;
-        world_point(1) = (i-yc2)/fy2;
-        world_point(2) = 1;
-        world_point = Ryright.t() * world_point;
-      }
-
-      world_point = Rrectx.t() * world_point;
-      world_point = Rx * world_point;
-
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = pix.x, v = pix.y;
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
-    }
-}
-
-void upraiseCamera2(cv::Mat src, cv::Mat dst, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam ocam)
-{
-  int width = src.cols, height = src.rows;
-  float theta1 = -45*CV_PI/180, theta2 = 45*CV_PI/180;
-
-  cv::Matx33d Rz = Rotation_z(euler(2));
-  cv::Matx33d Ry = Rotation_y(euler(1));
-  cv::Matx33d Rx = Rotation_x(euler(0));
-
-  float theta = CV_PI/2;
-  cv::Matx33d Rrectx = Rotation_x(theta);
-
-  cv::Vec3f center(0, 0, 1);
-  cv::Vec3f center1 = Rotation_y(theta1).t() * center;
-  cv::Vec3f center2 = Rotation_y(theta2).t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
-    {
-      cv::Point3f point3d = ocam.Camera2World(cv::Point2f(j,i));
-      cv::Vec3f world_point(point3d.x, point3d.y, point3d.z);
-      world_point = Rx.t() * world_point;
-      world_point = Rrectx * world_point;
-      int u, v;
-      if(j < xc)
-      {
-        world_point = Rotation_y(theta1) * world_point;
-        u = world_point(0)/world_point(2)*fx + xc1;
-        v = world_point(1)/world_point(2)*fy + yc1;
-      }
-      else
-      {
-        world_point = Rotation_y(theta2) * world_point;
-        u = world_point(0)/world_point(2)*fx + xc2;
-        v = world_point(1)/world_point(2)*fy + yc2;
-      }
-      
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(v,u) = src.at<cv::Vec3b>(i,j);
-    }
-}
-
-void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R, float fx, float fy, float xc, float yc, FisheyeParam ocam)
-{
-  int width = src.cols, height = src.rows;
-  for(int i = 0; i < height; i++)
-    for(int j = 0; j < width; j++)
-    {
-      cv::Vec3f world_point;
-      world_point(0) = (j-xc)/fx;
-      world_point(1) = (i-yc)/fy;
-      world_point(2) = 1;
-      world_point = R.t() * world_point;
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = pix.x, v = pix.y;
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
-    }
-}
-
-void correctCameraWithCorrectRotation(cv::Mat src, cv::Mat dst, cv::Matx33d R_l, cv::Matx33d R_r, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
-{
-  int width = dst.cols, height = dst.rows;
-  cv::Vec3d center(0, 0, 1);
-
-  // cv::Matx33d Rmean = R_l.t() * R_r;
-  // cv::Vec3d rvec = cv::Affine3d(Rmean).rvec() * 0.5;
-  // cv::Rodrigues(rvec, Rmean);
-
-  cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
-  //cv::Vec3d center1 = Rmean * center, center2 = Rmean.t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-  //float xc1 = xc, yc1 = yc;
-  //float xc2 = xc, yc2 = yc;
-
-  cv::Matx33d Rx = Rotation_x(euler(0));
-  //R_l = R_l * Rrect * Rx.t();
-  //R_r = R_r * Rrect * Rx.t();
-  
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
-    {
-      cv::Vec3d world_point;
-      if(j < xc)
-      {
-        world_point(0) = (j-xc1)/fx;
-        world_point(1) = (i-yc1)/fy;
-        world_point(2) = 1;
-        //world_point = Rmean * world_point;
-        world_point = R_l.t() * world_point;
-      }
-      else
-      {
-        world_point(0) = (j-xc2)/fx;
-        world_point(1) = (i-yc2)/fy;
-        world_point(2) = 1;
-        //world_point = Rmean.t() * world_point;
-        world_point = R_r.t() * world_point;
-      }
-      
-      world_point = Rrect.t() * world_point;
-      world_point = Rx * world_point;
-
-      cv::Point2f pix = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      int u = pix.x, v = pix.y;
-      if(u >=0 && u < width && v >= 0 && v < height)
-        dst.at<cv::Vec3b>(i,j) = src.at<cv::Vec3b>(v,u);
-    }
-}
-
-void correctCamera_LUT(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d R_r, cv::Vec3d euler, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
+void correctCamera_LUT2(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d R_r, cv::Matx33d R_ideal, double fx, double fy, double xc, double yc, FisheyeParam& ocam, double &xc1, double &xc2)
 {
   int width = mapx.cols, height = mapx.rows;
   cv::Vec3d center(0, 0, 1);
 
   cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
+  xc1 = xc + fx * center1(0)/center1(2);
+  xc2 = xc + fx * center2(0)/center2(2);
+  float yc1 = yc + fy * center1(1)/center1(2);
+  float yc2 = yc + fy * center2(1)/center2(2);
 
-  cv::Matx33d Rx = Rotation_x(euler(0));
-  
   for(int i = 0; i < height; i++)
     for(int j =0; j < width; j++)
     {
@@ -649,8 +252,7 @@ void correctCamera_LUT(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d 
         world_point = R_r.t() * world_point;
       }
       
-      world_point = Rrect.t() * world_point;
-      world_point = Rx * world_point;
+      world_point = R_ideal.t() * world_point;
 
       cv::Point2f point2d = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
       mapx.at<float>(i,j) = point2d.x;
@@ -658,42 +260,6 @@ void correctCamera_LUT(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d 
     }
 }
 
-void correctCamera_LUT2(cv::Mat mapx, cv::Mat mapy, cv::Matx33d R_l, cv::Matx33d R_r, cv::Matx33d R_new, float fx, float fy, float xc, float yc, FisheyeParam& ocam)
-{
-  int width = mapx.cols, height = mapx.rows;
-  cv::Vec3d center(0, 0, 1);
-
-  cv::Vec3d center1 = R_l.t() * center, center2 = R_r.t() * center;
-  //cv::Vec3d center1 = R_new.t() * R_l.t() * center, center2 = R_new.t() * R_r.t() * center;
-  float xc1 = xc + fx * center1(0)/center1(2), yc1 = yc + fy * center1(1)/center1(2);
-  float xc2 = xc + fx * center2(0)/center2(2), yc2 = yc + fy * center2(1)/center2(2);
-  
-  for(int i = 0; i < height; i++)
-    for(int j =0; j < width; j++)
-    {
-      cv::Vec3d world_point;
-      if(j < xc)
-      {
-        world_point(0) = (j-xc1)/fx;
-        world_point(1) = (i-yc1)/fy;
-        world_point(2) = 1;
-        world_point = R_l.t() * world_point;
-      }
-      else
-      {
-        world_point(0) = (j-xc2)/fx;
-        world_point(1) = (i-yc2)/fy;
-        world_point(2) = 1;
-        world_point = R_r.t() * world_point;
-      }
-      
-      world_point = R_new.t() * world_point;
-
-      cv::Point2f point2d = ocam.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
-      mapx.at<float>(i,j) = point2d.x;
-      mapy.at<float>(i,j) = point2d.y;
-    }
-}
 
 void mergeImagesandDrawLines(cv::Mat img1, cv::Mat img2, cv::Mat img3, cv::Mat img4, cv::Mat& dst)
 {
@@ -847,6 +413,315 @@ void calculateMatches(cv::Mat img1, cv::Mat img2, std::vector<cv::DMatch>& match
 }
 
 
+void ComputeStereoMatches(ORB_SLAM2::Frame& frame1, ORB_SLAM2::Frame& frame2, const float& xc1R, const float& xc2L)
+{
+    // std::cout << std::endl;
+    // std::cout << "Nl: " << frame1.mvKeysUn.size() << ", Nr: " << frame2.mvKeysUn.size() << std::endl;
+
+    clock_t start = clock();
+
+
+    const int thOrbDist = (ORB_SLAM2::ORBmatcher::TH_HIGH+ORB_SLAM2::ORBmatcher::TH_LOW)/2;
+
+    const int nRows = frame1.mpORBextractorLeft->mvImagePyramid[0].rows;
+    const int nCols = frame2.mpORBextractorLeft->mvImagePyramid[0].cols;
+
+    //Assign keypoints to row table
+    vector<vector<size_t> > vRowIndices(nRows,vector<size_t>());
+
+    for(int i=0; i<nRows; i++)
+        vRowIndices[i].reserve(200);
+
+    const int Nr = frame2.mvKeysUn.size();
+
+    // clock_t start = clock();
+
+    for(int iR=0; iR<Nr; iR++)
+    {
+        const cv::KeyPoint &kp = frame2.mvKeysUn[iR];
+
+        //新增加，只有右目的左半区域进行双目匹配，保证正深度
+        if(kp.pt.x >= nCols/2.0)
+            continue;
+
+        const float &kpY = kp.pt.y;
+        const float r = 2.0f*frame2.mvScaleFactors[frame2.mvKeysUn[iR].octave];
+        const int maxr = ceil(kpY+r);
+        const int minr = floor(kpY-r);
+
+        for(int yi=minr;yi<=maxr;yi++)
+            vRowIndices[yi].push_back(iR);
+    }
+
+    // clock_t end = clock();
+    // std::cout << "table cost: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+    clock_t zncc_sum = 0, slide_sum = 0, candidate_sum = 0;
+
+
+    // Set limits for search
+    const float minZ = frame1.mb;
+    // const float minZ = 0.001;
+    // std::cout << "minZ: " << minZ << std::endl;
+    const float minD = 0;
+    // const float maxD = nCols/2.0;
+    const float maxD = frame1.mbf/minZ;
+    // std::cout << "maxD: " << maxD << std::endl;
+
+    // std::cout << "minZ: " << minZ << ", mbf: " << frame1.mbf 
+    //             << ", maxD: " << maxD << std::endl;
+
+    // For each left keypoint search a match in the right image
+    vector<pair<int, int> > vDistIdx;
+    vDistIdx.reserve(frame1.N);
+    frame1.mvMatch12 = vector<int>(frame1.N, -1);
+
+    for(int iL=0; iL<frame1.N; iL++)
+    {
+        const cv::KeyPoint &kpL = frame1.mvKeysUn[iL];
+        const int &levelL = kpL.octave;
+        const float &vL = kpL.pt.y;
+        const float &uL = kpL.pt.x;
+
+        //新增加，只有左目的右半区域进行双目匹配
+        if(uL <= nCols/2.0)
+            continue;
+
+        const vector<size_t> &vCandidates = vRowIndices[vL];
+
+        if(vCandidates.empty())
+            continue;
+
+        const float minU = uL-maxD;
+        const float maxU = uL-minD;
+
+        if(maxU<0)
+            continue;
+
+        int bestDist = ORB_SLAM2::ORBmatcher::TH_HIGH;
+        size_t bestIdxR = 0;
+
+        const cv::Mat &dL = frame1.mDescriptors.row(iL);
+
+
+
+        // clock_t candidate_start = clock();
+
+        // Compare descriptor to right keypoints
+        for(size_t iC=0; iC<vCandidates.size(); iC++)
+        {
+            const size_t iR = vCandidates[iC];
+            const cv::KeyPoint &kpR = frame2.mvKeysUn[iR];
+
+            //修改，根据关键点尺度差异进行筛选
+            if(fabs(levelL - kpR.octave) > 3)
+                continue;
+
+            //新增加，根据关键点方向差异进行筛选
+            if(fabs(kpL.angle - kpR.angle) > 15)
+                continue;
+
+            const float &uR = kpR.pt.x;
+
+
+            if(uR-xc2L+xc1R>=minU && uR-xc2L+xc1R<=maxU)
+            {
+                const cv::Mat &dR = frame2.mDescriptors.row(iR);
+                const int dist = ORB_SLAM2::ORBmatcher::DescriptorDistance(dL,dR);
+                
+                if(dist<bestDist)
+                {
+                    bestDist = dist;
+                    bestIdxR = iR;
+                }
+            }
+        }
+
+        // clock_t candidate_end = clock();
+        // candidate_sum += candidate_end - candidate_start;
+        // std::cout << "candidate cost: " << (double)(candidate_end-candidate_start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+
+
+        // Subpixel match by correlation
+        if(bestDist<thOrbDist)
+        {
+
+            //新增加，通过关键点尺度差异和方向差异筛选
+            const cv::KeyPoint &kpR = frame2.mvKeysUn[bestIdxR];
+
+            // // 新增加，根据关键点方向差异进行筛选
+            // if(fabs(kpL.angle - kpR.angle) > 15)
+            //     continue;
+            // // 新增加，根据关键点尺度差异进行筛选
+            // if(fabs(kpL.octave - kpR.octave) > 3)
+            //     continue;
+
+            // coordinates in image pyramid at keypoint scale
+            const float uR0 = frame2.mvKeysUn[bestIdxR].pt.x;
+            const float scaleFactor = frame1.mvInvScaleFactors[kpL.octave];
+            const float scaleduL = round(kpL.pt.x*scaleFactor);
+            const float scaledvL = round(kpL.pt.y*scaleFactor);
+            const float scaleduR0 = round(uR0*scaleFactor);
+
+
+            //新增加，通过ZNCC进行筛选
+            const int size = 5;
+            const float scaleFactorR = frame2.mvInvScaleFactors[kpR.octave];
+            const float scaleduR = round(kpR.pt.x*scaleFactorR);
+            const float scaledvR = round(kpR.pt.y*scaleFactorR);
+            const cv::Mat &imgL = frame1.mpORBextractorLeft->mvImagePyramid[kpL.octave];//.rowRange(scaledvL-12*w,scaledvL+12*w+1).colRange(scaleduL-12*w,scaleduL+12*w+1);
+            const cv::Mat &imgR = frame2.mpORBextractorLeft->mvImagePyramid[kpR.octave];//.rowRange(scaledvR-12*w,scaledvR+12*w+1).colRange(scaleduR-12*w,scaleduR+12*w+1);
+            
+            
+            // clock_t start = clock();
+            
+            float zncc = ZNCC(imgL, imgR, cv::Point2i(scaleduL,scaledvL), cv::Point2i(scaleduR,scaledvR), size);
+            
+            
+            // clock_t end = clock();
+            // zncc_sum += end - start;
+            // std::cout << "zncc cost: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+            // std::cout << "zncc: " << zncc << std::endl;
+            
+            if(zncc <= 0.85)
+                continue;
+
+
+
+            // start = clock();
+
+            // sliding window search
+            const int w = 5;
+            cv::Mat IL = frame1.mpORBextractorLeft->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduL-w,scaleduL+w+1);
+            IL.convertTo(IL,CV_32F);
+            IL = IL - IL.at<float>(w,w) * cv::Mat::ones(IL.rows,IL.cols,CV_32F);
+
+            int bestDist = INT_MAX;
+            int bestincR = 0;
+            const int L = 5;
+            vector<float> vDists;
+            vDists.resize(2*L+1);
+
+            const float iniu = scaleduR0+L-w;
+            const float endu = scaleduR0+L+w+1;
+            if(iniu<0 || endu >= frame2.mpORBextractorLeft->mvImagePyramid[kpL.octave].cols)
+                continue;
+
+            for(int incR=-L; incR<=+L; incR++)
+            {
+                cv::Mat IR = frame2.mpORBextractorLeft->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduR0+incR-w,scaleduR0+incR+w+1);
+                IR.convertTo(IR,CV_32F);
+                IR = IR - IR.at<float>(w,w) *cv::Mat::ones(IR.rows,IR.cols,CV_32F);
+
+                float dist = cv::norm(IL,IR,cv::NORM_L1);
+                if(dist<bestDist)
+                {
+                    bestDist =  dist;
+                    bestincR = incR;
+                }
+
+                vDists[L+incR] = dist;
+            }
+
+            if(bestincR==-L || bestincR==L)
+                continue;
+
+            // Sub-pixel match (Parabola fitting)
+            const float dist1 = vDists[L+bestincR-1];
+            const float dist2 = vDists[L+bestincR];
+            const float dist3 = vDists[L+bestincR+1];
+
+            const float deltaR = (dist1-dist3)/(2.0f*(dist1+dist3-2.0f*dist2));
+
+
+            // end = clock();
+            // slide_sum += end - start;
+            // std::cout << "slide cost: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+
+            if(deltaR<-1 || deltaR>1)
+                continue;
+                
+            // Re-scaled coordinate
+            float bestuR = frame1.mvScaleFactors[kpL.octave]*((float)scaleduR0+(float)bestincR+deltaR);
+            // float disparity = (uL-bestuR);
+            float disparity = (uL-xc1R) - (bestuR-xc2L);
+
+            if(disparity>=minD && disparity<maxD)
+            {
+                if(disparity<=0)
+                {
+                    disparity=0.01;
+                    bestuR = uL-0.01;
+                }
+                frame1.mvuRight[iL] = bestuR;
+                frame1.mvDepth[iL]=frame1.mbf/disparity;
+                frame2.mvDepth[bestIdxR]=frame1.mvDepth[iL];
+                frame1.mvMatch12[iL] = bestIdxR;
+                vDistIdx.push_back(pair<int,int>(bestDist,iL));
+            }
+        }
+    }
+
+    // std::cout << "zncc sum is: " << (double)zncc_sum / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+    // std::cout << "slide sum is: " << (double)slide_sum / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+    // std::cout << "candidate sum is: " << (double)candidate_sum / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+    // clock_t sort_start = clock();
+
+    sort(vDistIdx.begin(),vDistIdx.end());
+
+    // clock_t sort_end = clock();
+    // std::cout << "sort cost: " << (double)(sort_end-sort_start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+    const float median = vDistIdx[vDistIdx.size()/2].first;
+    const float thDist = 1.5f*1.4f*median;
+    // const float thDist = median;
+
+    for(int i=vDistIdx.size()-1;i>=0;i--)
+    {
+        if(vDistIdx[i].first<thDist)
+            break;
+        else
+        {
+            frame1.mvuRight[vDistIdx[i].second]=-1;
+            frame1.mvDepth[vDistIdx[i].second]=-1;
+            frame2.mvDepth[frame1.mvMatch12[vDistIdx[i].second]]=-1;
+            frame1.mvMatch12[vDistIdx[i].second] = -1;
+        }
+    }
+
+    // //测试代码
+    // const cv::Mat &img1 = frame1.mpORBextractorLeft->mvImagePyramid[0];
+    // const cv::Mat &img2 = frame2.mpORBextractorLeft->mvImagePyramid[0];
+    // for(int i = 0; i < frame1.N; i++)
+    // {
+    //     if(frame1.mvMatch12[i] > 0)
+    //     {
+
+    //         const cv::KeyPoint &kpL = frame1.mvKeysUn[i];
+    //         const cv::KeyPoint &kpR = frame2.mvKeysUn[frame1.mvMatch12[i]];
+    //         const int size = 4;
+    //         float xL = kpL.pt.x, yL = kpL.pt.y, xR = kpR.pt.x, yR = kpR.pt.y;
+            
+    //         cv::Mat dst1 = img1.rowRange(yL-10*size,yL+10*size+1).colRange(xL-10*size,xL+10*size+1).clone();
+    //         cv::line(dst1, cv::Point(10*size,0), cv::Point(10*size, 20*size), cv::Scalar(0,0,255));
+    //         cv::line(dst1, cv::Point(0,10*size), cv::Point(20*size, 10*size), cv::Scalar(0,0,255));
+    //         cv::Mat dst2 = img2.rowRange(yR-10*size,yR+10*size+1).colRange(xR-10*size,xR+10*size+1).clone();
+    //         cv::line(dst2, cv::Point(10*size,0), cv::Point(10*size, 20*size), cv::Scalar(0,0,255));
+    //         cv::line(dst2, cv::Point(0,10*size), cv::Point(20*size, 10*size), cv::Scalar(0,0,255));
+            
+    //         cv::imshow("img1", img1);
+    //         cv::imshow("img2", img2);
+    //         cv::imshow("look1", dst1);
+    //         cv::imshow("look2", dst2);
+    //         cv::waitKey(0);
+    //     }
+    // }
+}
+
+
 void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Mat back, 
              cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
              FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
@@ -884,17 +759,14 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
       }
       else if(x > -y * tan_theta && x > y * tan_theta)
       {
-        // cv::Vec3f t = R_r.t() * t_r;
-        // world_point = world_point + t;
         world_point = R_r * world_point;
         world_point = world_point + t_r;
         point2d = ocam_right.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
         int u = point2d.x, v = point2d.y;
-        // int u = point2d.x * fx, v = point2d.y * fy;
         if(u >= 0 && u < right.cols && v >= 0 && v < right.rows)
           output.at<cv::Vec3b>(i,j) = right.at<cv::Vec3b>(v, u);
       }
-      else// if(x > -y * tan_theta && x < y * tan_theta)
+      else
       {
         world_point = R_b * world_point;
         world_point = world_point + t_b;
@@ -907,257 +779,646 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
 }
 
 
-void topview1(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Mat back, 
-             cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
-             FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
+void computeIntegral(cv::Mat src, vector<vector<unsigned long long>>& res)
 {
-  int w = left.cols;
-  int h = left.rows;
-  int xc = output.cols/2;
-  int yc = output.rows/2;
-  float k = (float)h/w;
-  int fx = 38;
-  int fy = fx * k;
-  for(int i = 0; i < h; i++)
-    for(int j = 0; j < w; j++)
-    {
-      cv::Point3f p3d = ocam_left.Camera2World(cv::Point2f((float)j, (float)i));
-      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
-      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
-      wp -= t_l;
-      wp = R_l.t() * wp;
-      int u = wp(0)/wp(2) * fx + xc;
-      int v = wp(1)/wp(2) * fy + yc;
 
-      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
-        output.at<cv::Vec3b>(v,u) = left.at<cv::Vec3b>(i,j);
-    }
-
-  w = front.cols;
-  h = front.rows;
-  for(int i = 0; i < h; i++)
-    for(int j = 0; j < w; j++)
-    {
-      cv::Point3f p3d = ocam_front.Camera2World(cv::Point2f(j, i));
-      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
-      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
-      wp -= t_f;
-      wp = R_f.t() * wp;
-      int u = wp(0)/wp(2) * fx + xc;
-      int v = wp(1)/wp(2) * fy + yc;
-      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
-        output.at<cv::Vec3b>(v,u) = front.at<cv::Vec3b>(i,j);
-    }
-  
-  w = right.cols;
-  h = right.rows;
-  for(int i = 0; i < h; i++)
-    for(int j = 0; j < w; j++)
-    {
-      cv::Point3f p3d = ocam_right.Camera2World(cv::Point2f(j, i));
-      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
-      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
-      wp -= t_r;
-      wp = R_r.t() * wp;
-      int u = wp(0)/wp(2) * fx + xc;
-      int v = wp(1)/wp(2) * fy + yc;
-      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
-        output.at<cv::Vec3b>(v,u) = right.at<cv::Vec3b>(i,j);
-    }
-
-  w = back.cols;
-  h = back.rows;
-  for(int i = 0; i < h; i++)
-    for(int j = 0; j < w; j++)
-    {
-      cv::Point3f p3d = ocam_back.Camera2World(cv::Point2f(j, i));
-      cv::Vec3f wp(p3d.x, p3d.y, p3d.z);
-      // cv::Vec3f wp(p3d.x/p3d.z, p3d.y/p3d.z, p3d.z/p3d.z);
-      wp -= t_b;
-      wp = R_b.t() * wp;
-      int u = wp(0)/wp(2) * fx + xc;
-      int v = wp(1)/wp(2) * fy + yc;
-      if(u >= 0 && u < output.cols && v >= 0 && v < output.rows)
-        output.at<cv::Vec3b>(v,u) = back.at<cv::Vec3b>(i,j);
-  
-    }
 }
 
 
-
-void Onchange(int, void*)
+void write(std::string fileName, cv::Mat mapx, cv::Mat mapy)
 {
-  initImages();
+  if(fileName.empty())
+  {
+    // std::cout << "文件名为空" << std::endl;
+    // return;
+    throw std::runtime_error("文件名为空");
+  }
 
-  //twoFisheye2twoPerspective(src1, src2, dst1, dst2, fx, fy, R_r, R_l, ocam_model1, ocam_model2);
-  //Fisheye2Perspective(src1, result1, fx, fy, R_l, ocam_model1);
-  //Fisheye2Perspective(src2, result2, fx, fy, R_r, ocam_model2);
-  //Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc,ocam_model1);
-  //Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc,ocam_model2);
-  //upraiseCamera(src_left, result_left, euler_left, fx, fy, xc, yc, ocam_model_left);
-  //upraiseCamera(src_front, result_front, euler_front, fx, fy, xc, yc, ocam_model_front);
-  //correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, fx, fy, xc, yc, ocam_model_left);
-  //correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_r, fx, fy, xc, yc, ocam_model_back);
+  if(mapx.empty() || mapy.empty())
+  {
+    std::cout << "Mat为空" << std::endl;
+    return;
+  }
 
-  // correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
-  // correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
-  // correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
-  // correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
+  ofstream out(fileName, ios::binary);
 
-  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
-  // calculateMatches(dst_left, dst_front, matches, large);
+  int rows = mapx.rows, cols = mapx.cols, type = mapx.type();
 
-  correctCamera_LUT2(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, Rotation_left_ideal, fx, fy, xc, yc, ocam_model_left);
-  correctCamera_LUT2(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, Rotation_front_ideal, fx, fy, xc, yc, ocam_model_front);
-  correctCamera_LUT2(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, Rotation_right_ideal, fx, fy, xc, yc, ocam_model_right);
-  correctCamera_LUT2(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, Rotation_back_ideal, fx, fy, xc, yc, ocam_model_back);
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)mapx.data, mapx.rows*mapx.cols*mapx.elemSize());
 
-  cv::remap(src_left, dst_left, mapx_left, mapy_left, CV_INTER_LINEAR);
-  cv::remap(src_front, dst_front, mapx_front, mapy_front, CV_INTER_LINEAR);
-  cv::remap(src_right, dst_right, mapx_right, mapy_right, CV_INTER_LINEAR);
-  cv::remap(src_back, dst_back, mapx_back, mapy_back, CV_INTER_LINEAR);
+  rows = mapy.rows;
+  cols = mapy.cols;
+  type = mapy.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)mapy.data, mapy.rows*mapy.cols*mapy.elemSize());
 
-  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
-  calculateMatches(dst_left, dst_front, matches, large);
-  //calculateMatches(dst_front, dst_right, matches, large);
-  //calculateMatches(dst_right, dst_back, matches, large);
-  //calculateMatches(dst_back, dst_left, matches, large);
-
-  cv::imshow( "large image", large);
-  //cv::imshow( "upraiseCamera1", result_left );
-  // cv::imshow( "upraiseCamera2", result_front );
-  // cv::imshow( "two perspective result1", dst_left );
-  // cv::imshow( "two perspective result2", dst_front );
-  //cv::imshow( "two perspective result3", dst_right );
-  //cv::imshow( "two perspective result4", dst_back );
+  out.flush();
+  out.close();
 }
+
+
+void write(std::string fileName, cv::Mat left_mapx, cv::Mat left_mapy, cv::Mat front_mapx, cv::Mat front_mapy, cv::Mat right_mapx, cv::Mat right_mapy, cv::Mat back_mapx, cv::Mat back_mapy, 
+            double fx, double fy, double cx, double cy, double ThDepth, double baseline_left2front, double baseline_front2right, double baseline_right2back, double baseline_back2left, 
+            double left_xcL, double left_xcR, double front_xcL, double front_xcR, double right_xcL, double right_xcR, double back_xcL, double back_xcR)
+{
+  if(fileName.empty())
+  {
+    // std::cout << "文件名为空" << std::endl;
+    // return;
+    throw std::runtime_error("文件名为空");
+  }
+
+  if(left_mapx.empty() || left_mapy.empty())
+  {
+    // std::cout << "Mat为空" << std::endl;
+    // return;
+    throw std::runtime_error("左目map为空");
+  }
+
+  if(front_mapx.empty() || front_mapy.empty())
+  {
+    // std::cout << "Mat为空" << std::endl;
+    // return;
+    throw std::runtime_error("前目map为空");
+  }
+
+  if(right_mapx.empty() || right_mapy.empty())
+  {
+    // std::cout << "Mat为空" << std::endl;
+    // return;
+    throw std::runtime_error("右目map为空");
+  }
+
+  if(back_mapx.empty() || back_mapy.empty())
+  {
+    // std::cout << "Mat为空" << std::endl;
+    // return;
+    throw std::runtime_error("后目map为空");
+  }
+
+  ofstream out(fileName, ios::binary);
+
+  // 写入左目mapx和mapy
+  int rows = left_mapx.rows, cols = left_mapx.cols, type = left_mapx.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)left_mapx.data, left_mapx.rows*left_mapx.cols*left_mapx.elemSize());
+
+  rows = left_mapy.rows;
+  cols = left_mapy.cols;
+  type = left_mapy.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)left_mapy.data, left_mapy.rows*left_mapy.cols*left_mapy.elemSize());
+
+  // 写入前目mapx和mapy
+  rows = front_mapx.rows, cols = front_mapx.cols, type = front_mapx.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)front_mapx.data, front_mapx.rows*front_mapx.cols*front_mapx.elemSize());
+
+  rows = front_mapy.rows;
+  cols = front_mapy.cols;
+  type = front_mapy.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)front_mapy.data, front_mapy.rows*front_mapy.cols*front_mapy.elemSize());
+
+
+  // 写入右目mapx和mapy
+  rows = right_mapx.rows, cols = right_mapx.cols, type = right_mapx.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)right_mapx.data, right_mapx.rows*right_mapx.cols*right_mapx.elemSize());
+
+  rows = right_mapy.rows;
+  cols = right_mapy.cols;
+  type = right_mapy.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)right_mapy.data, right_mapy.rows*right_mapy.cols*right_mapy.elemSize());
+
+  // 写入后目mapx和mapy
+  rows = back_mapx.rows, cols = back_mapx.cols, type = back_mapx.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)back_mapx.data, back_mapx.rows*back_mapx.cols*back_mapx.elemSize());
+
+  rows = back_mapy.rows;
+  cols = back_mapy.cols;
+  type = back_mapy.type();
+  out.write((char*)&rows, sizeof(int));
+  out.write((char*)&cols, sizeof(int));
+  out.write((char*)&type, sizeof(int));
+  out.write((char*)back_mapy.data, back_mapy.rows*back_mapy.cols*back_mapy.elemSize());
+
+  // 写入fx，fy，cx，cy，ThDepth
+  out.write((char*)&fx, sizeof(double));
+  out.write((char*)&fy, sizeof(double));
+  out.write((char*)&cx, sizeof(double));
+  out.write((char*)&cy, sizeof(double));
+  out.write((char*)&ThDepth, sizeof(double));
+
+  // 写入baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
+  out.write((char*)&baseline_left2front, sizeof(double));
+  out.write((char*)&baseline_front2right, sizeof(double));
+  out.write((char*)&baseline_right2back, sizeof(double));
+  out.write((char*)&baseline_back2left, sizeof(double));
+
+  // 写入left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
+  out.write((char*)&left_xcL, sizeof(double));
+  out.write((char*)&left_xcR, sizeof(double));
+  out.write((char*)&front_xcL, sizeof(double));
+  out.write((char*)&front_xcR, sizeof(double));
+  out.write((char*)&right_xcL, sizeof(double));
+  out.write((char*)&right_xcR, sizeof(double));
+  out.write((char*)&back_xcL, sizeof(double));
+  out.write((char*)&back_xcR, sizeof(double));
+
+  out.flush();
+  out.close();
+}
+
+
+void read(std::string fileName, cv::Mat &mapx, cv::Mat &mapy)
+{
+  if(fileName.empty())
+  {
+    std::cout << "文件名为空" << std::endl;
+    return;
+  }
+
+  ifstream in(fileName, ios::binary);
+
+  int rows, cols, type;
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  mapx = cv::Mat(rows, cols, type);
+  in.read((char*)mapx.data, mapx.rows*mapx.cols*mapx.elemSize());
+
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  mapy = cv::Mat(rows, cols, type);
+  in.read((char*)mapy.data, mapy.rows*mapy.cols*mapy.elemSize());
+
+  in.close();
+}
+
+
+void read(std::string fileName, cv::Mat &left_mapx, cv::Mat &left_mapy, cv::Mat &front_mapx, cv::Mat &front_mapy, cv::Mat &right_mapx, cv::Mat &right_mapy, cv::Mat &back_mapx, cv::Mat &back_mapy, 
+            double &fx, double &fy, double &cx, double &cy, double &ThDepth, double &baseline_left2front, double &baseline_front2right, double &baseline_right2back, double &baseline_back2left, 
+            double &left_xcL, double &left_xcR, double &front_xcL, double &front_xcR, double &right_xcL, double &right_xcR, double &back_xcL, double &back_xcR)
+{
+  if(fileName.empty())
+  {
+    // std::cout << "文件名为空" << std::endl;
+    // return;
+    throw std::runtime_error("文件名为空");
+  }
+
+  ifstream in(fileName, ios::binary);
+
+  int rows, cols, type;
+
+  // 读取左目mapx和mapy
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  left_mapx = cv::Mat(rows, cols, type);
+  in.read((char*)left_mapx.data, left_mapx.rows*left_mapx.cols*left_mapx.elemSize());
+
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  left_mapy = cv::Mat(rows, cols, type);
+  in.read((char*)left_mapy.data, left_mapy.rows*left_mapy.cols*left_mapy.elemSize());
+
+  // 读取前目mapx和mapy
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  front_mapx = cv::Mat(rows, cols, type);
+  in.read((char*)front_mapx.data, front_mapx.rows*front_mapx.cols*front_mapx.elemSize());
+
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  front_mapy = cv::Mat(rows, cols, type);
+  in.read((char*)front_mapy.data, front_mapy.rows*front_mapy.cols*front_mapy.elemSize());
+
+  // 读取右目mapx和mapy
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  right_mapx = cv::Mat(rows, cols, type);
+  in.read((char*)right_mapx.data, right_mapx.rows*right_mapx.cols*right_mapx.elemSize());
+
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  right_mapy = cv::Mat(rows, cols, type);
+  in.read((char*)right_mapy.data, right_mapy.rows*right_mapy.cols*right_mapy.elemSize());
+
+  // 读取后目mapx和mapy
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  back_mapx = cv::Mat(rows, cols, type);
+  in.read((char*)back_mapx.data, back_mapx.rows*back_mapx.cols*back_mapx.elemSize());
+
+  in.read((char*)&rows, sizeof(int));
+  in.read((char*)&cols, sizeof(int));
+  in.read((char*)&type, sizeof(int));
+  back_mapy = cv::Mat(rows, cols, type);
+  in.read((char*)back_mapy.data, back_mapy.rows*back_mapy.cols*back_mapy.elemSize());
+
+  // 写入fx，fy，cx，cy，ThDepth
+  in.read((char*)&fx, sizeof(double));
+  in.read((char*)&fy, sizeof(double));
+  in.read((char*)&cx, sizeof(double));
+  in.read((char*)&cy, sizeof(double));
+  in.read((char*)&ThDepth, sizeof(double));
+
+  // 写入baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
+  in.read((char*)&baseline_left2front, sizeof(double));
+  in.read((char*)&baseline_front2right, sizeof(double));
+  in.read((char*)&baseline_right2back, sizeof(double));
+  in.read((char*)&baseline_back2left, sizeof(double));
+
+  // 写入left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
+  in.read((char*)&left_xcL, sizeof(double));
+  in.read((char*)&left_xcR, sizeof(double));
+  in.read((char*)&front_xcL, sizeof(double));
+  in.read((char*)&front_xcR, sizeof(double));
+  in.read((char*)&right_xcL, sizeof(double));
+  in.read((char*)&right_xcR, sizeof(double));
+  in.read((char*)&back_xcL, sizeof(double));
+  in.read((char*)&back_xcR, sizeof(double));
+
+  in.close();
+}
+
+
 
 int main(int argc, char *argv[])
 {
+  double baseline_left2front, baseline_front2right, baseline_right2back, baseline_back2left;
+  double left_xcL, left_xcR, front_xcL, front_xcR, right_xcL, right_xcR, back_xcL, back_xcR;
+  double ThDepth;
+
   Load();
   initImages();
-  const float FOVx = 160;
-  const float FOVy = 120;
-  xc = dst_left.cols/2.0, yc = dst_left.rows/2.0;
-  Rrect = Rotation_x(CV_PI/2);
-  fx = xc / tan(FOVx/2 * CV_PI / 180);
-  fy = yc / tan(FOVy/2 * CV_PI / 180);
-  //std::cout << xc / tan(FOV/2 * CV_PI / 180) << std::endl;
-  //std::cout << yc / tan(FOV/2 * CV_PI / 180) << std::endl;
 
-  std::cout << "水平方向FOV: " << 2 * atan2(xc, fx) / CV_PI * 180 << std::endl;
+  bool fromFile = true;
+  // xc = COLS, yc = ROWS/2.0;
+
+  if(!fromFile)
+  {
+    // const float FOVx = 160;
+    // const float FOVy = 120;
+    const float FOVx = 90;
+    const float FOVy = 90;
+
+    ThDepth = 40;
+    xc = COLS, yc = ROWS/2.0;
+    fx = xc/2.0 / tan(FOVx/2 * CV_PI / 180);
+    fy = yc / tan(FOVy/2 * CV_PI / 180);
+
+    // Rcw
+    cv::Matx33d Rx = Rotation_x(CV_PI/2);
+    Rotation_left_ideal = Rx * Rotation_z(-CV_PI/2);
+    Rotation_front_ideal = Rx;
+    Rotation_right_ideal = Rx * Rotation_z(CV_PI/2);
+    Rotation_back_ideal = Rx * Rotation_z(CV_PI);
+    
+    // twc
+    // const int HIGH = -1;
+    // Translation_left_ideal = cv::Vec3d(-1, 0, HIGH);
+    // Translation_front_ideal = cv::Vec3d(0, -2, HIGH);
+    // Translation_right_ideal = cv::Vec3d(1, 0, HIGH);
+    // Translation_back_ideal = cv::Vec3d(0, 2, HIGH);
+    // Translation_left_ideal = cv::Vec3d(Translation_left(0), Translation_left(1), HIGH);
+    // Translation_front_ideal = cv::Vec3d(Translation_front(0), Translation_front(1), HIGH);
+    // Translation_right_ideal = cv::Vec3d(Translation_right(0), Translation_right(1), HIGH);
+    // Translation_back_ideal = cv::Vec3d(Translation_back(0), Translation_back(1), HIGH);
+
+    Translation_left_ideal = Translation_left;
+    Translation_front_ideal = Translation_front;
+    Translation_right_ideal = Translation_right;
+    Translation_back_ideal = Translation_back;
+
+    calculateTwoCorrectRotation2(Rotation_left_ideal, Translation_left_ideal, Rotation_front_ideal, Translation_front_ideal, Rotation_left_r, Rotation_front_l, baseline_left2front);
+    calculateTwoCorrectRotation2(Rotation_front_ideal, Translation_front_ideal, Rotation_right_ideal, Translation_right_ideal, Rotation_front_r, Rotation_right_l, baseline_front2right);
+    calculateTwoCorrectRotation2(Rotation_right_ideal, Translation_right_ideal, Rotation_back_ideal, Translation_back_ideal, Rotation_right_r, Rotation_back_l, baseline_right2back);
+    calculateTwoCorrectRotation2(Rotation_back_ideal, Translation_back_ideal, Rotation_left_ideal, Translation_left_ideal, Rotation_back_r, Rotation_left_l, baseline_back2left);
+
+    // std::cout << "baseline_left2front: " << baseline_left2front << std::endl;
+    // std::cout << "baseline_front2right: " << baseline_front2right << std::endl;
+    // std::cout << "baseline_right2back: " << baseline_right2back << std::endl;
+    // std::cout << "baseline_back2left: " << baseline_back2left << std::endl;
+
+    correctCamera_LUT2(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, Rotation_left_ideal * Rotation_left, fx, fy, xc, yc, ocam_model_left, left_xcL, left_xcR);
+    correctCamera_LUT2(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, Rotation_front_ideal * Rotation_front, fx, fy, xc, yc, ocam_model_front, front_xcL, front_xcR);
+    correctCamera_LUT2(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, Rotation_right_ideal * Rotation_right, fx, fy, xc, yc, ocam_model_right, right_xcL, right_xcR);
+    correctCamera_LUT2(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, Rotation_back_ideal * Rotation_back, fx, fy, xc, yc, ocam_model_back, back_xcL, back_xcR);
+
+    // topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
+
+    // cv::FileStorage fs("parameters.yaml", cv::FileStorage::WRITE);
+
+    // fs << "fx" << fx;
+    // fs << "fy" << fy;
+    // fs << "xc" << xc;
+    // fs << "yc" << yc;
+    // fs << "ThDepth" << ThDepth;
+    // fs << "baseline_left2front" << baseline_left2front;
+    // fs << "baseline_front2right" << baseline_front2right;
+    // fs << "baseline_right2back" << baseline_right2back;
+    // fs << "baseline_back2left" << baseline_back2left;
+    // fs << "left_xcL" << left_xcL;
+    // fs << "left_xcR" << left_xcR;
+    // fs << "front_xcL" << front_xcL;
+    // fs << "front_xcR" << front_xcR;
+    // fs << "right_xcL" << right_xcL;
+    // fs << "right_xcR" << right_xcR;
+    // fs << "back_xcL" << back_xcL;
+    // fs << "back_xcR" << back_xcR;
+
+    // fs.release();
+
+    // write("map_left.mb", mapx_left, mapy_left);
+    // write("map_front.mb", mapx_front, mapy_front);
+    // write("map_right.mb", mapx_right, mapy_right);
+    // write("map_back.mb", mapx_back, mapy_back);
+    write("multi_fisheye.b", mapx_left, mapy_left, mapx_front, mapy_front, mapx_right, mapy_right, mapx_back, mapy_back, fx, fy, xc, yc, ThDepth, baseline_left2front, baseline_front2right, baseline_right2back, baseline_back2left, left_xcL, left_xcR, front_xcL, front_xcR, right_xcL, right_xcR, back_xcL, back_xcR);
+  }
+  else
+  {
+    // cv::FileStorage fs("parameters.yaml", cv::FileStorage::READ);
+    
+    // fs["fx"] >> fx;
+    // fs["fy"] >> fy;
+    // fs["ThDepth"] >> ThDepth;
+    // fs["xc"] >> xc;
+    // fs["yc"] >> yc;
+    // fs["baseline_left2front"] >> baseline_left2front;
+    // fs["baseline_front2right"] >> baseline_front2right;
+    // fs["baseline_right2back"] >> baseline_right2back;
+    // fs["baseline_back2left"] >> baseline_back2left;
+    // fs["left_xcL"] >> left_xcL;
+    // fs["left_xcR"] >> left_xcR;
+    // fs["front_xcL"] >> front_xcL;
+    // fs["front_xcR"] >> front_xcR;
+    // fs["right_xcL"] >> right_xcL;
+    // fs["right_xcR"] >> right_xcR;
+    // fs["back_xcL"] >> back_xcL;
+    // fs["back_xcR"] >> back_xcR;
+
+    // fs.release();
+
+    // read("map_left.mb", mapx_left, mapy_left);
+    // read("map_front.mb", mapx_front, mapy_front);
+    // read("map_right.mb", mapx_right, mapy_right);
+    // read("map_back.mb", mapx_back, mapy_back);
+    // read("multi_fisheye.b", mapx_left, mapy_left, mapx_front, mapy_front, mapx_right, mapy_right, mapx_back, mapy_back, fx, fy, xc, yc, ThDepth, baseline_left2front, baseline_front2right, baseline_right2back, baseline_back2left, left_xcL, left_xcR, front_xcL, front_xcR, right_xcL, right_xcR, back_xcL, back_xcR);
+
+    multi.read("multi_fisheye.b");
+    fx = multi.fx;
+    fy = multi.fy;
+    xc = multi.cx;
+    yc = multi.cy;
+    ThDepth = multi.ThDepth;
+
+    baseline_left2front = multi.left_baseline;
+    baseline_front2right = multi.front_baseline;
+    baseline_right2back = multi.right_baseline;
+    baseline_back2left = multi.back_baseline;
+
+    // left_xcL = multi.left_cxL;
+    // left_xcR = multi.left_cxR;
+    // front_xcL = multi.front_cxL;
+    // front_xcR = multi.front_cxR;
+    // right_xcL = multi.right_cxL;
+    // right_xcR = multi.right_cxR;
+    // back_xcL = multi.back_cxL;
+    // back_xcR = multi.back_cxR;
+
+    mapx_left = multi.left_mapx;
+    mapy_left = multi.left_mapy;
+
+    mapx_front = multi.front_mapx;
+    mapy_front = multi.front_mapy;
+
+    mapx_right = multi.right_mapx;
+    mapy_right = multi.right_mapy;
+
+    mapx_back = multi.back_mapx;
+    mapy_back = multi.back_mapy;
+
+  }
+
+
+  std::cout << "xc: " << xc << ", yc: " << yc << std::endl;
+  std::cout << "fx: " << fx << ", fy: " << fy << std::endl;
+  std::cout << "水平方向FOV: " << 2 * atan2(xc/2.0, fx) / CV_PI * 180 << std::endl;
   std::cout << "垂直方向FOV: " << 2 * atan2(yc, fy) / CV_PI * 180 << std::endl;
 
-  euler_left = rotationMatrixToEulerAngles(Rotation_left);  //R为Rcw
-  euler_front = rotationMatrixToEulerAngles(Rotation_front);
-  euler_right = rotationMatrixToEulerAngles(Rotation_right);
-  euler_back = rotationMatrixToEulerAngles(Rotation_back);
-
-  //upraiseCamera(src_left, result_left, euler_left, fx, fy, xc, yc, ocam_model_left);
-  //upraiseCamera(src_front, result_front, euler_front, fx, fy, xc, yc, ocam_model_front);
-
-  //twoFisheye2twoPerspective(src1, src2, dst1, dst2, fx, fy, R_r, R_l, ocam_model1, ocam_model2);
-
-/*
-  cv::Matx33d Rx1 = Rotation_x(euler_left(0));
-  cv::Matx33d Rx2 = Rotation_x(euler_front(0));
-  cv::Matx33d Rrect = Rotation_x(CV_PI/2);
-  R1 = Rrect * Rx1.t() * R1;
-  t1 = Rrect * Rx1.t() * t1;
-  R2 = Rrect * Rx2.t() * R2;
-  t2 = Rrect * Rx2.t() * t2;
-  R = R2 * R1.t();
-  t = t2 - R * t1;
-  calculateTwoRotation(R, t, R_l, R_r);
-  //Fisheye2Perspective(dst1, result1, fx, fy, R_l, ocam_model1);
-  //Fisheye2Perspective(dst2, result2, fx, fy, R_r, ocam_model2);
-  //Fisheye2twoPerspective(src1, result1, fx, fy, xc, yc, ocam_model1);
-  //Fisheye2twoPerspective(src2, result2, fx, fy, xc, yc, ocam_model2);
-  //calculateTwoRotation(R1, t1, R2, t2, euler_left, euler_front, R_l, R_r);
-  //calculateTwoRotation(R1, t1, R2, t2, R_l, R_r);
-  R_l = R_l * Rrect * Rx1.t();
-  R_r = R_r * Rrect * Rx2.t();
-*/
-
-
-/*
-  calculateTwoCorrectRotation(Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_left_r, Rotation_front_l);
-  calculateTwoCorrectRotation(Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_front_r, Rotation_right_l);
-  calculateTwoCorrectRotation(Rotation_right, Translation_right, Rotation_back, Translation_back, Rotation_right_r, Rotation_back_l);
-  calculateTwoCorrectRotation(Rotation_back, Translation_back, Rotation_left, Translation_left, Rotation_back_r, Rotation_left_l);
-
-  correctCameraWithCorrectRotation(src_left, dst_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
-  correctCameraWithCorrectRotation(src_front, dst_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
-  correctCameraWithCorrectRotation(src_right, dst_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
-  correctCameraWithCorrectRotation(src_back, dst_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
-  correctCamera_LUT(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, euler_left, fx, fy, xc, yc, ocam_model_left);
-  correctCamera_LUT(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, euler_front, fx, fy, xc, yc, ocam_model_front);
-  correctCamera_LUT(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, euler_right, fx, fy, xc, yc, ocam_model_right);
-  correctCamera_LUT(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, euler_back, fx, fy, xc, yc, ocam_model_back);
-*/
-  cv::Matx33d Rx = Rotation_x(CV_PI/2);
-  Rotation_left_ideal = Rx * Rotation_z(-CV_PI/2) * Rotation_left.t();
-  Rotation_front_ideal = Rx * Rotation_front.t();
-  Rotation_right_ideal = Rx * Rotation_z(CV_PI/2) * Rotation_right.t();
-  Rotation_back_ideal = Rx * Rotation_z(CV_PI) * Rotation_back.t();
-
-  Translation_left_ideal = Rotation_left_ideal * Translation_left;
-  Translation_front_ideal = Rotation_front_ideal * Translation_front;
-  Translation_right_ideal = Rotation_right_ideal * Translation_right;
-  Translation_back_ideal = Rotation_back_ideal * Translation_back;
-
-  calculateTwoCorrectRotation2(Rotation_left_ideal*Rotation_left, Translation_left_ideal, Rotation_front_ideal*Rotation_front, Translation_front_ideal, Rotation_left_r, Rotation_front_l);
-  calculateTwoCorrectRotation2(Rotation_front_ideal*Rotation_front, Translation_front_ideal, Rotation_right_ideal*Rotation_right, Translation_right_ideal, Rotation_front_r, Rotation_right_l);
-  calculateTwoCorrectRotation2(Rotation_right_ideal*Rotation_right, Translation_right_ideal, Rotation_back_ideal*Rotation_back, Translation_back_ideal, Rotation_right_r, Rotation_back_l);
-  calculateTwoCorrectRotation2(Rotation_back_ideal*Rotation_back, Translation_back_ideal, Rotation_left_ideal*Rotation_left, Translation_left_ideal, Rotation_back_r, Rotation_left_l);
-
-  correctCamera_LUT2(mapx_left, mapy_left, Rotation_left_l, Rotation_left_r, Rotation_left_ideal, fx, fy, xc, yc, ocam_model_left);
-  correctCamera_LUT2(mapx_front, mapy_front, Rotation_front_l, Rotation_front_r, Rotation_front_ideal, fx, fy, xc, yc, ocam_model_front);
-  correctCamera_LUT2(mapx_right, mapy_right, Rotation_right_l, Rotation_right_r, Rotation_right_ideal, fx, fy, xc, yc, ocam_model_right);
-  correctCamera_LUT2(mapx_back, mapy_back, Rotation_back_l, Rotation_back_r, Rotation_back_ideal, fx, fy, xc, yc, ocam_model_back);
 
   cv::remap(src_left, dst_left, mapx_left, mapy_left, CV_INTER_LINEAR);
   cv::remap(src_front, dst_front, mapx_front, mapy_front, CV_INTER_LINEAR);
   cv::remap(src_right, dst_right, mapx_right, mapy_right, CV_INTER_LINEAR);
   cv::remap(src_back, dst_back, mapx_back, mapy_back, CV_INTER_LINEAR);
 
-  //mergeImagesandDrawLines(dst_left, dst_front, dst_right, dst_back, large);
+  src_left = dst_left.clone();
+  src_front = dst_front.clone();
+  src_right = dst_right.clone();
+  src_back = dst_back.clone();
+
+  // clock_t start = clock();
+
+  cv::cvtColor(dst_left, dst_left, CV_BGR2GRAY);
+  cv::cvtColor(dst_front, dst_front, CV_BGR2GRAY);
+  cv::cvtColor(dst_right, dst_right, CV_BGR2GRAY);
+  cv::cvtColor(dst_back, dst_back, CV_BGR2GRAY);
+
+  // clock_t end = clock();
+  // std::cout << "cost time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+
+  clock_t start = clock();
+
+
   //calculateMatches(dst_left, dst_front, matches, large);
   //calculateMatches(dst_front, dst_right, matches, large);
   //calculateMatches(dst_right, dst_back, matches, large);
-  calculateMatches(dst_back, dst_left, matches, large);
+  const int POINTS = 2000;
+  ORB_SLAM2::ORBextractor* orb1 = new ORB_SLAM2::ORBextractor(POINTS, 1.2f, 8, 31, 8);
+  ORB_SLAM2::ORBextractor* orb2 = new ORB_SLAM2::ORBextractor(POINTS, 1.2f, 8, 31, 8);
+  ORB_SLAM2::ORBextractor* orb3 = new ORB_SLAM2::ORBextractor(POINTS, 1.2f, 8, 31, 8);
+  ORB_SLAM2::ORBextractor* orb4 = new ORB_SLAM2::ORBextractor(POINTS, 1.2f, 8, 31, 8);
 
-  topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
+  ORB_SLAM2::ORBVocabulary* voc = new ORB_SLAM2::ORBVocabulary();
+  cv::Mat K = (cv::Mat_<float>(3,3) << fx, 0, xc, 0, fy, yc, 0, 0, 1);
+  cv::Mat distCoef = cv::Mat::zeros(4,1,CV_32F);
+  double ThDepth_left = baseline_left2front * ThDepth;
+  double ThDepth_front = baseline_front2right * ThDepth;
+  double ThDepth_right = baseline_right2back * ThDepth;
+  double ThDepth_back = baseline_back2left * ThDepth;
+
+  ORB_SLAM2::Frame frame_left = ORB_SLAM2::Frame(dst_left, 0.0, orb1, voc, K, distCoef, baseline_left2front * fx, ThDepth_left);
+  ORB_SLAM2::Frame frame_front = ORB_SLAM2::Frame(dst_front, 0.0, orb2, voc, K, distCoef, baseline_front2right * fx, ThDepth_front);
+  ORB_SLAM2::Frame frame_right = ORB_SLAM2::Frame(dst_right, 0.0, orb3, voc, K, distCoef, baseline_right2back * fx, ThDepth_right);
+  ORB_SLAM2::Frame frame_back = ORB_SLAM2::Frame(dst_back, 0.0, orb4, voc, K, distCoef, baseline_back2left * fx, ThDepth_back);
+
+/*
+  // clock_t end = clock();
+  // std::cout << "cost time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+  // clock_t start = clock();
+
+  // ORB_SLAM2::Frame::ComputeStereoMatches(frame_left, frame_front, left_xcR, front_xcL);
+  ComputeStereoMatches(frame_left, frame_front, left_xcR, front_xcL);
+
+  // clock_t end = clock();
+  // std::cout << "ComputeStereoMatches time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+  
+  // start = end;
+  // ORB_SLAM2::Frame::ComputeStereoMatches(frame_front, frame_right, front_xcR, right_xcL);
+  ComputeStereoMatches(frame_front, frame_right, front_xcR, right_xcL);
+  // end = clock();
+  // std::cout << "ComputeStereoMatches time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+  
+  // start = end;
+  // ORB_SLAM2::Frame::ComputeStereoMatches(frame_right, frame_back, right_xcR, back_xcL);
+  ComputeStereoMatches(frame_right, frame_back, right_xcR, back_xcL);
+  // end = clock();
+  // std::cout << "ComputeStereoMatches time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+  
+  // start = end;
+  // ORB_SLAM2::Frame::ComputeStereoMatches(frame_back, frame_left, back_xcR, left_xcL);
+  ComputeStereoMatches(frame_back, frame_left, back_xcR, left_xcL);
+  // end = clock();
+  // clock_t end = clock();
+  // std::cout << "ComputeStereoMatches time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+*/
+
+  multi.ComputeStereoMatches(frame_left, frame_front, frame_right, frame_back);
+
+
+  clock_t end = clock();
+  std::cout << "total time: " << (double)(end-start) / CLOCKS_PER_SEC * 1000 << " ms." << std::endl;
+
+
+  // 以下代码用于调试显示
+  vector<cv::DMatch> match_left2front, match_front2right, match_right2back, match_back2left;
+  
+  int N = frame_left.N;
+  match_left2front.reserve(N);
+  match_front2right.reserve(N);
+  match_right2back.reserve(N);
+  match_back2left.reserve(N);
+
+  for(int i = 0; i < N; i++)
+  {
+    if(frame_left.mvMatch12[i] < 0)
+      continue;
+    
+    // std::cout << "Depth: " << frame_left.mvDepth[i] << std::endl;
+    match_left2front.push_back(cv::DMatch(i, frame_left.mvMatch12[i], FLT_MAX));
+  }
+  // std::cout << std::endl;
+
+  N = frame_front.N;
+  for(int i = 0; i < N; i++)
+  {
+    if(frame_front.mvMatch12[i] < 0)
+      continue;
+    
+    // std::cout << "Depth: " << frame_front.mvDepth[i] << std::endl;
+    match_front2right.push_back(cv::DMatch(i, frame_front.mvMatch12[i], FLT_MAX));
+  }
+  // std::cout << std::endl;
+
+  N = frame_right.N;
+  for(int i = 0; i < N; i++)
+  {
+    if(frame_right.mvMatch12[i] < 0)
+      continue;
+    
+    // std::cout << "Depth: " << frame_right.mvDepth[i] << std::endl;
+    match_right2back.push_back(cv::DMatch(i, frame_right.mvMatch12[i], FLT_MAX));
+  }
+  // std::cout << std::endl;
+
+  N = frame_back.N;
+  for(int i = 0; i < N; i++)
+  {
+    if(frame_back.mvMatch12[i] < 0)
+      continue;
+    
+    // std::cout << "Depth: " << frame_back.mvDepth[i] << std::endl;
+    match_back2left.push_back(cv::DMatch(i, frame_back.mvMatch12[i], FLT_MAX));
+  }
+  // std::cout << std::endl;
+
+  std::cout << "match_left2front: " << match_left2front.size() << std::endl;
+  cv::drawMatches(src_left, frame_left.mvKeysUn, src_front, frame_front.mvKeysUn, match_left2front, large1);
+  
+  std::cout << "match_front2right: " << match_front2right.size() << std::endl;
+  cv::drawMatches(src_front, frame_front.mvKeysUn, src_right, frame_right.mvKeysUn, match_front2right, large2);
+  
+  std::cout << "match_right2back: " << match_right2back.size() << std::endl;
+  cv::drawMatches(src_right, frame_right.mvKeysUn, src_back, frame_back.mvKeysUn, match_right2back, large3);
+
+  std::cout << "match_back2left: " << match_back2left.size() << std::endl;
+  cv::drawMatches(src_back, frame_back.mvKeysUn, src_left, frame_left.mvKeysUn, match_back2left, large4);
+
+  mergeImagesandDrawLines(src_left, src_front, src_right, src_back, large);
+
+  delete orb1;
+  delete orb2;
+  delete orb3;
+  delete orb4;
+  delete voc;
+
+  // topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
 
   cv::namedWindow( "topview", 0 );
 
-  cv::namedWindow( "large image", 0 );
-  // cv::namedWindow( "Original fisheye camera image1", 0 );
-  // cv::namedWindow( "Original fisheye camera image2", 0 );
-  // cv::namedWindow( "upraiseCamera1", 0 );
-  // cv::namedWindow( "upraiseCamera2", 0 );
-  // cv::namedWindow( "two perspective result1", 0 );
-  // cv::namedWindow( "two perspective result2", 0 );
-  // cv::namedWindow( "two perspective result3", 0 );
-  // cv::namedWindow( "two perspective result4", 0 );
-  cv::namedWindow( "toolbox", 0 );
+  cv::namedWindow( "large image1", 0 );
+  cv::namedWindow( "large image2", 0 );
+  cv::namedWindow( "large image3", 0 );
+  cv::namedWindow( "large image4", 0 );
 
-  cv::imshow( "topview", topview_full);
+  // cv::namedWindow( "toolbox", 0 );
 
-  cv::imshow( "large image", large);
-  // cv::imshow( "Original fisheye camera image1", src_left );
-  // cv::imshow( "Original fisheye camera image2", src_front );
-  // cv::imshow( "upraiseCamera1", result_left );
-  // cv::imshow( "upraiseCamera2", result_front );
-  // cv::imshow( "two perspective result1", dst_left );
-  // cv::imshow( "two perspective result2", dst_front );
-  // cv::imshow( "two perspective result3", dst_right );
-  // cv::imshow( "two perspective result4", dst_back );
+  // cv::imshow( "topview", topview_full);
+  cv::imshow( "topview", large);
 
-  cv::createTrackbar("fx", "toolbox", &fx, slider_max, Onchange);
-  cv::createTrackbar("fy", "toolbox", &fy, slider_max, Onchange);
-  cv::createTrackbar("xc", "toolbox", &xc, slider_max, Onchange);
-  cv::createTrackbar("yc", "toolbox", &yc, slider_max, Onchange);
+  cv::imshow( "large image1", large1);
+  cv::imshow( "large image2", large2);
+  cv::imshow( "large image3", large3);
+  cv::imshow( "large image4", large4);
+
+
+  // cv::createTrackbar("fx", "toolbox", &fx, slider_max, Onchange);
+  // cv::createTrackbar("fy", "toolbox", &fy, slider_max, Onchange);
+  // cv::createTrackbar("xc", "toolbox", &xc, slider_max, Onchange);
+  // cv::createTrackbar("yc", "toolbox", &yc, slider_max, Onchange);
 
   /* --------------------------------------------------------------------*/
   /* Wait until Key 'q' pressed                                         */
@@ -1167,18 +1428,13 @@ int main(int argc, char *argv[])
   /* --------------------------------------------------------------------*/
   /* Save image                                                          */
   /* --------------------------------------------------------------------*/
-  // cv::imwrite("upraiseCamera1.jpg", dst_left);
-  // printf("\nImage %s saved\n","upraiseCamera1.jpg");
-  // cv::imwrite("upraiseCamera2.jpg", dst_front);
-  // printf("\nImage %s saved\n","upraiseCamera2.jpg");
-  //cv::imwrite("result1.jpg", dst_left);
-  //printf("\nImage %s saved\n","result1.jpg");
-  // cv::imwrite("result2.jpg", dst_front);
-  // printf("\nImage %s saved\n","result2.jpg");
   cv::imwrite("large.jpg", large);
-  printf("\nImage %s saved\n","large.jpg");
+  cv::imwrite("large1.jpg", large1);
+  cv::imwrite("large2.jpg", large2);
+  cv::imwrite("large3.jpg", large3);
+  cv::imwrite("large4.jpg", large4);
 
-  //cv::destroyAllWindows();
+  printf("\nImages %s saved\n","large.jpg");
 
   return 0;
 }
