@@ -1,7 +1,7 @@
 /*================================================================
 *   Copyright (C) 2019 * Ltd. All rights reserved.
 *
-*   Editor      : VIM
+*   Editor      : Tao Li
 *   File name   : multi_fisheye_param.h
 *   Author      : Mofan
 *   Created date: 2019-05-29 16:32:55
@@ -73,7 +73,7 @@ public:
     cv::Mat K;
     cv::Mat distCoef;
 
-//private:
+private:
     double left_cxL;
     double left_cxR;
 

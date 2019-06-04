@@ -200,20 +200,20 @@ void multi_fisheye_param::read(std::string fileName)
   back_mapy = cv::Mat(rows, cols, type);
   in.read((char*)back_mapy.data, back_mapy.rows*back_mapy.cols*back_mapy.elemSize());
 
-  // 写入fx，fy，cx，cy，ThDepth
+  // 读取fx，fy，cx，cy，ThDepth
   in.read((char*)&fx, sizeof(double));
   in.read((char*)&fy, sizeof(double));
   in.read((char*)&cx, sizeof(double));
   in.read((char*)&cy, sizeof(double));
   in.read((char*)&ThDepth, sizeof(double));
 
-  // 写入baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
+  // 读取baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
   in.read((char*)&left_baseline, sizeof(double));
   in.read((char*)&front_baseline, sizeof(double));
   in.read((char*)&right_baseline, sizeof(double));
   in.read((char*)&back_baseline, sizeof(double));
 
-  // 写入left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
+  // 读取left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
   in.read((char*)&left_cxL, sizeof(double));
   in.read((char*)&left_cxR, sizeof(double));
   in.read((char*)&front_cxL, sizeof(double));
@@ -512,8 +512,7 @@ void multi_fisheye_param::ComputeStereoMatches(ORB_SLAM2::Frame& frame1, ORB_SLA
             vMatch12[vDistIdx[i].second] = -1;
         }
     }
-
-    frame1.mvMatch12 = vMatch12;  //用于显示，正式使用应删除，否则会报错
+    frame1.mvMatch12 = vMatch12;  //用于显示，正式使用时应删除
 }
 
 void multi_fisheye_param::ComputeStereoMatches(ORB_SLAM2::Frame& left_frame, ORB_SLAM2::Frame& front_frame, ORB_SLAM2::Frame& right_frame, ORB_SLAM2::Frame& back_frame)

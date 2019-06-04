@@ -726,6 +726,8 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
              cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
              FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
 {
+  output = cv::Mat(ROWS, COLS, left.type());
+  
   int width = output.cols;
   int height = output.rows;
   float k = (float)height / width;
@@ -1046,20 +1048,20 @@ void read(std::string fileName, cv::Mat &left_mapx, cv::Mat &left_mapy, cv::Mat 
   back_mapy = cv::Mat(rows, cols, type);
   in.read((char*)back_mapy.data, back_mapy.rows*back_mapy.cols*back_mapy.elemSize());
 
-  // 写入fx，fy，cx，cy，ThDepth
+  // 读取fx，fy，cx，cy，ThDepth
   in.read((char*)&fx, sizeof(double));
   in.read((char*)&fy, sizeof(double));
   in.read((char*)&cx, sizeof(double));
   in.read((char*)&cy, sizeof(double));
   in.read((char*)&ThDepth, sizeof(double));
 
-  // 写入baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
+  // 读取baseline_left2front、baseline_front2right、baseline_right2back、baseline_back2left
   in.read((char*)&baseline_left2front, sizeof(double));
   in.read((char*)&baseline_front2right, sizeof(double));
   in.read((char*)&baseline_right2back, sizeof(double));
   in.read((char*)&baseline_back2left, sizeof(double));
 
-  // 写入left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
+  // 读取left_xcL、left_xcR、front_xcL、front_xcR、right_xcL、right_xcR、back_xcL、back_xcR
   in.read((char*)&left_xcL, sizeof(double));
   in.read((char*)&left_xcR, sizeof(double));
   in.read((char*)&front_xcL, sizeof(double));
@@ -1070,6 +1072,21 @@ void read(std::string fileName, cv::Mat &left_mapx, cv::Mat &left_mapy, cv::Mat 
   in.read((char*)&back_xcR, sizeof(double));
 
   in.close();
+}
+
+void Matx33dToMat(cv::Matx33d src, cv::Vec3f vec,cv::Mat& dst)
+{
+  dst = cv::Mat::zeros(4,4,CV_32F);
+  for(int i = 0; i < 3; i++)
+    for(int j= 0; j < 3; j++)
+    {
+      dst.at<float>(i,j) = src(i,j);
+    }
+
+  dst.at<float>(0, 3) = vec(0);
+  dst.at<float>(1, 3) = vec(1);
+  dst.at<float>(2, 3) = vec(2);
+  dst.at<float>(3, 3) = 1;
 }
 
 
@@ -1138,6 +1155,43 @@ int main(int argc, char *argv[])
 
     // topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
 
+    cv::Matx33d corrected_rotation_left_l = Rotation_left_l * Rotation_left_ideal;
+    cv::Matx33d corrected_rotation_left_r = Rotation_left_r * Rotation_left_ideal;
+
+    cv::Matx33d corrected_rotation_front_l = Rotation_front_l * Rotation_front_ideal;
+    cv::Matx33d corrected_rotation_front_r = Rotation_front_r * Rotation_front_ideal;
+
+    cv::Matx33d corrected_rotation_right_l = Rotation_right_l * Rotation_right_ideal;
+    cv::Matx33d corrected_rotation_right_r = Rotation_right_r * Rotation_right_ideal;
+
+    cv::Matx33d corrected_rotation_back_l = Rotation_back_l * Rotation_back_ideal;
+    cv::Matx33d corrected_rotation_back_r = Rotation_back_r * Rotation_back_ideal;
+
+    cv::FileStorage fs("corrected_extrinsic_params_Twc.yaml", cv::FileStorage::WRITE);
+
+    cv::Mat temp1, temp2;  // Pw = Twc * Pc = Rwc * Pc + twc
+    Matx33dToMat(corrected_rotation_left_l.t(), Translation_left, temp1);
+    Matx33dToMat(corrected_rotation_left_r.t(), Translation_left, temp2);
+    fs << "corrected_transformation_left_l" << temp1;
+    fs << "corrected_transformation_left_r" << temp2;
+
+    Matx33dToMat(corrected_rotation_front_l.t(), Translation_front, temp1);
+    Matx33dToMat(corrected_rotation_front_r.t(), Translation_front, temp2);
+    fs << "corrected_transformation_front_l" << temp1;
+    fs << "corrected_transformation_front_r" << temp2;
+
+    Matx33dToMat(corrected_rotation_right_l.t(), Translation_right, temp1);
+    Matx33dToMat(corrected_rotation_right_r.t(), Translation_right, temp2);
+    fs << "corrected_transformation_right_l" << temp1;
+    fs << "corrected_transformation_right_r" << temp2;
+
+    Matx33dToMat(corrected_rotation_back_l.t(), Translation_back, temp1);
+    Matx33dToMat(corrected_rotation_back_r.t(), Translation_back, temp2);
+    fs << "corrected_transformation_back_l" << temp1;
+    fs << "corrected_transformation_back_r" << temp2;
+
+    fs.release();
+
     // cv::FileStorage fs("parameters.yaml", cv::FileStorage::WRITE);
 
     // fs << "fx" << fx;
@@ -1165,6 +1219,7 @@ int main(int argc, char *argv[])
     // write("map_right.mb", mapx_right, mapy_right);
     // write("map_back.mb", mapx_back, mapy_back);
     write("multi_fisheye.b", mapx_left, mapy_left, mapx_front, mapy_front, mapx_right, mapy_right, mapx_back, mapy_back, fx, fy, xc, yc, ThDepth, baseline_left2front, baseline_front2right, baseline_right2back, baseline_back2left, left_xcL, left_xcR, front_xcL, front_xcR, right_xcL, right_xcR, back_xcL, back_xcR);
+    multi = multi_fisheye_param("multi_fisheye.b");
   }
   else
   {
@@ -1196,7 +1251,9 @@ int main(int argc, char *argv[])
     // read("map_back.mb", mapx_back, mapy_back);
     // read("multi_fisheye.b", mapx_left, mapy_left, mapx_front, mapy_front, mapx_right, mapy_right, mapx_back, mapy_back, fx, fy, xc, yc, ThDepth, baseline_left2front, baseline_front2right, baseline_right2back, baseline_back2left, left_xcL, left_xcR, front_xcL, front_xcR, right_xcL, right_xcR, back_xcL, back_xcR);
 
-    multi.read("multi_fisheye.b");
+    // multi.read("multi_fisheye.b");
+    multi = multi_fisheye_param("multi_fisheye.b");
+
     fx = multi.fx;
     fy = multi.fy;
     xc = multi.cx;
