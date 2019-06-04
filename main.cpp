@@ -18,12 +18,11 @@
 #include <iostream>
 #include <string>
 
-const int slider_max = 5000;
 double fx, fy, xc, yc;
 cv::Mat large, large1, large2, large3, large4;
 cv::Mat src_left, src_front, src_right, src_back;
+cv::Mat correct_left, correct_front, correct_right, correct_back;
 cv::Mat dst_left, dst_front, dst_right, dst_back;
-cv::Mat result_left, result_front, result_right, result_back;
 
 cv::Mat topview_full;
 
@@ -40,8 +39,6 @@ cv::Vec3d Translation_left_ideal, Translation_front_ideal, Translation_right_ide
 
 cv::Matx33d Rotation_left_l, Rotation_left_r, Rotation_front_l, Rotation_front_r;
 cv::Matx33d Rotation_right_l, Rotation_right_r, Rotation_back_l, Rotation_back_r;
-
-cv::Matx33d Rrect;
 
 std::vector<cv::DMatch> matches;
 
@@ -131,34 +128,6 @@ void Load()
 
 void initImages()
 {
-  // topview_full = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
-
-  // large1 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
-  // large2 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
-  // large3 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
-  // large4 = cv::Mat(src_left.rows, src_left.cols*4, src_left.type(), cv::Scalar::all(0));
-
-  // dst_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
-  // dst_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
-  // dst_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
-  // dst_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
-
-  // result_left = cv::Mat(src_left.rows, src_left.cols, src_left.type(), cv::Scalar::all(0));
-  // result_front = cv::Mat(src_front.rows, src_front.cols, src_front.type(), cv::Scalar::all(0));
-  // result_right = cv::Mat(src_right.rows, src_right.cols, src_right.type(), cv::Scalar::all(0));
-  // result_back = cv::Mat(src_back.rows, src_back.cols, src_back.type(), cv::Scalar::all(0));
-
-  // mapx_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapx_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapx_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapx_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
-
-  // mapy_left = cv::Mat(src_left.rows, src_left.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapy_front = cv::Mat(src_front.rows, src_front.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapy_right = cv::Mat(src_right.rows, src_right.cols, CV_32FC1, cv::Scalar::all(0));
-  // mapy_back = cv::Mat(src_back.rows, src_back.cols, CV_32FC1, cv::Scalar::all(0));
-
-
   large = cv::Mat(ROWS, COLS*8, src_left.type(), cv::Scalar::all(0));
 
   large1 = cv::Mat(ROWS, COLS*4, src_left.type(), cv::Scalar::all(0));
@@ -175,7 +144,6 @@ void initImages()
   mapy_front = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
   mapy_right = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
   mapy_back = cv::Mat(ROWS, COLS*2, CV_32FC1, cv::Scalar::all(0));
-
 
 }
 
@@ -726,14 +694,14 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
              cv::Matx33d R_l, cv::Vec3f t_l, cv::Matx33d R_f, cv::Vec3f t_f, cv::Matx33d R_r, cv::Vec3f t_r, cv::Matx33d R_b, cv::Vec3f t_b, 
              FisheyeParam& ocam_left, FisheyeParam& ocam_front, FisheyeParam& ocam_right, FisheyeParam& ocam_back)
 {
-  output = cv::Mat(ROWS, COLS, left.type());
+  output = cv::Mat::zeros(ROWS, COLS, left.type());
   
   int width = output.cols;
   int height = output.rows;
   float k = (float)height / width;
   float scale = 38;
   float fx = scale, fy = scale*k;
-  float theta = 36 * CV_PI / 180;
+  float theta = 25 * CV_PI / 180;
   cv::Point2f point2d;
   for(int i = 0; i < height; i++)
     for(int j = 0; j < width; j++)
@@ -743,8 +711,13 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
       cv::Vec3f world_point(x / fx, y / fy, 0);
       if(x < y * tan_theta && x < -y * tan_theta)
       {
-        world_point = R_l * world_point;
-        world_point = world_point + t_l;
+        // Pc = Rcw * Pw + tcw
+        // world_point = R_l * world_point; // Rcw
+        // world_point = world_point + t_l; // tcw
+
+        // Pw = Rwc * Pc + twc
+        world_point = world_point - t_l; // twc
+        world_point = R_l.t() * world_point; // Rwc
         point2d = ocam_left.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
         int u = point2d.x, v = point2d.y;
         if(u >= 0 && u < left.cols && v >= 0 && v < left.rows)
@@ -752,8 +725,13 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
       }
       else if(x > y * tan_theta && x < -y * tan_theta)
       {
-        world_point = R_f * world_point;
-        world_point = world_point + t_f;
+        // Pc = Rcw * Pw + tcw
+        // world_point = R_f * world_point; // Rcw
+        // world_point = world_point + t_f; // tcw
+
+        // Pw = Rwc * Pc + twc
+        world_point = world_point - t_f; // twc
+        world_point = R_f.t() * world_point; // Rwc
         point2d = ocam_front.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
         int u = point2d.x, v = point2d.y;
         if(u >= 0 && u < front.cols && v >= 0 && v < front.rows)
@@ -761,8 +739,13 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
       }
       else if(x > -y * tan_theta && x > y * tan_theta)
       {
-        world_point = R_r * world_point;
-        world_point = world_point + t_r;
+        // Pc = Rcw * Pw + tcw
+        // world_point = R_r * world_point; // Rcw
+        // world_point = world_point + t_r; // tcw
+
+        // Pw = Rwc * Pc + twc
+        world_point = world_point - t_r; // twc
+        world_point = R_r.t() * world_point; // Rwc
         point2d = ocam_right.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
         int u = point2d.x, v = point2d.y;
         if(u >= 0 && u < right.cols && v >= 0 && v < right.rows)
@@ -770,20 +753,19 @@ void topview(cv::Mat& output, cv::Mat left, cv::Mat front, cv::Mat right, cv::Ma
       }
       else
       {
-        world_point = R_b * world_point;
-        world_point = world_point + t_b;
+        // Pc = Rcw * Pw + tcw
+        // world_point = R_b * world_point; // Rcw
+        // world_point = world_point + t_b; // tcw
+
+        // Pw = Rwc * Pc + twc
+        world_point = world_point - t_b; // twc
+        world_point = R_b.t() * world_point; // Rwc
         point2d = ocam_back.World2Camera(cv::Point3f(world_point(0), world_point(1), world_point(2)));
         int u = point2d.x, v = point2d.y;
         if(u >= 0 && u < back.cols && v >= 0 && v < back.rows)
           output.at<cv::Vec3b>(i,j) = back.at<cv::Vec3b>(v, u);
       }
     }
-}
-
-
-void computeIntegral(cv::Mat src, vector<vector<unsigned long long>>& res)
-{
-
 }
 
 
@@ -1300,10 +1282,10 @@ int main(int argc, char *argv[])
   cv::remap(src_right, dst_right, mapx_right, mapy_right, CV_INTER_LINEAR);
   cv::remap(src_back, dst_back, mapx_back, mapy_back, CV_INTER_LINEAR);
 
-  src_left = dst_left.clone();
-  src_front = dst_front.clone();
-  src_right = dst_right.clone();
-  src_back = dst_back.clone();
+  correct_left = dst_left.clone();
+  correct_front = dst_front.clone();
+  correct_right = dst_right.clone();
+  correct_back = dst_back.clone();
 
   // clock_t start = clock();
 
@@ -1430,61 +1412,39 @@ int main(int argc, char *argv[])
     // std::cout << "Depth: " << frame_back.mvDepth[i] << std::endl;
     match_back2left.push_back(cv::DMatch(i, frame_back.mvMatch12[i], FLT_MAX));
   }
-  // std::cout << std::endl;
 
   std::cout << "match_left2front: " << match_left2front.size() << std::endl;
-  cv::drawMatches(src_left, frame_left.mvKeysUn, src_front, frame_front.mvKeysUn, match_left2front, large1);
+  cv::drawMatches(correct_left, frame_left.mvKeysUn, correct_front, frame_front.mvKeysUn, match_left2front, large1);
   
   std::cout << "match_front2right: " << match_front2right.size() << std::endl;
-  cv::drawMatches(src_front, frame_front.mvKeysUn, src_right, frame_right.mvKeysUn, match_front2right, large2);
+  cv::drawMatches(correct_front, frame_front.mvKeysUn, correct_right, frame_right.mvKeysUn, match_front2right, large2);
   
   std::cout << "match_right2back: " << match_right2back.size() << std::endl;
-  cv::drawMatches(src_right, frame_right.mvKeysUn, src_back, frame_back.mvKeysUn, match_right2back, large3);
+  cv::drawMatches(correct_right, frame_right.mvKeysUn, correct_back, frame_back.mvKeysUn, match_right2back, large3);
 
   std::cout << "match_back2left: " << match_back2left.size() << std::endl;
-  cv::drawMatches(src_back, frame_back.mvKeysUn, src_left, frame_left.mvKeysUn, match_back2left, large4);
+  cv::drawMatches(correct_back, frame_back.mvKeysUn, correct_left, frame_left.mvKeysUn, match_back2left, large4);
 
-  mergeImagesandDrawLines(src_left, src_front, src_right, src_back, large);
-
-  delete orb1;
-  delete orb2;
-  delete orb3;
-  delete orb4;
-  delete voc;
-
-  // topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
+  mergeImagesandDrawLines(correct_left, correct_front, correct_right, correct_back, large);
+  topview(topview_full, src_left, src_front, src_right, src_back, Rotation_left, Translation_left, Rotation_front, Translation_front, Rotation_right, Translation_right, Rotation_back, Translation_back, ocam_model_left, ocam_model_front, ocam_model_right, ocam_model_back);
 
   cv::namedWindow( "topview", 0 );
-
+  cv::namedWindow( "large", 0 );
   cv::namedWindow( "large image1", 0 );
   cv::namedWindow( "large image2", 0 );
   cv::namedWindow( "large image3", 0 );
   cv::namedWindow( "large image4", 0 );
 
-  // cv::namedWindow( "toolbox", 0 );
-
-  // cv::imshow( "topview", topview_full);
-  cv::imshow( "topview", large);
-
+  cv::imshow( "topview", topview_full);
+  cv::imshow( "large", large);
   cv::imshow( "large image1", large1);
   cv::imshow( "large image2", large2);
   cv::imshow( "large image3", large3);
   cv::imshow( "large image4", large4);
 
-
-  // cv::createTrackbar("fx", "toolbox", &fx, slider_max, Onchange);
-  // cv::createTrackbar("fy", "toolbox", &fy, slider_max, Onchange);
-  // cv::createTrackbar("xc", "toolbox", &xc, slider_max, Onchange);
-  // cv::createTrackbar("yc", "toolbox", &yc, slider_max, Onchange);
-
-  /* --------------------------------------------------------------------*/
-  /* Wait until Key 'q' pressed                                         */
-  /* --------------------------------------------------------------------*/
   while((char)cv::waitKey(10) != 'q');
  
-  /* --------------------------------------------------------------------*/
-  /* Save image                                                          */
-  /* --------------------------------------------------------------------*/
+  cv::imwrite("topview.jpg", topview_full);
   cv::imwrite("large.jpg", large);
   cv::imwrite("large1.jpg", large1);
   cv::imwrite("large2.jpg", large2);
@@ -1492,6 +1452,12 @@ int main(int argc, char *argv[])
   cv::imwrite("large4.jpg", large4);
 
   printf("\nImages %s saved\n","large.jpg");
+
+  delete orb1;
+  delete orb2;
+  delete orb3;
+  delete orb4;
+  delete voc;
 
   return 0;
 }
